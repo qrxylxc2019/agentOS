@@ -298,9 +298,6 @@ function ChatScreen(): React.JSX.Element {
               style={styles.centerImage}
               resizeMode="contain"
             />
-            <View style={styles.speechBubble}>
-              <Text style={styles.speechText}>"我要买门票"</Text>
-            </View>
           </View>
         </View>
 
