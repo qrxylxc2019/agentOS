@@ -11,15 +11,20 @@ import {
   Alert,
   NativeModules,
   DeviceEventEmitter,
-  Image,
-  ImageBackground,
 } from 'react-native';
 import {ChatMessage, AgentOSModule, ActionConfig, ActionExecutionData} from '../types';
 
 function ChatScreen(): React.JSX.Element {
   const isDarkMode = useColorScheme() === 'dark';
   const flatListRef = useRef<FlatList>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);  // 不再需要初始消息
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      id: '1',
+      text: '你好！我是社保小助手，专门为您解答社会保险相关问题。无论是社保缴费、医保报销、养老保险还是其他社保业务，我都可以为您提供专业的咨询和指导。请问有什么社保问题需要我帮助您解决吗？',
+      isUser: false,
+      timestamp: new Date(),
+    },
+  ]);
   const [inputText, setInputText] = useState('');
   const [isListening, setIsListening] = useState(false);
 
@@ -47,14 +52,14 @@ function ChatScreen(): React.JSX.Element {
           // 3. 设置角色人设
           const personaResult = await NativeModules.AgentOSModule.setPersona(
             pageId, 
-            '你是猎户风景区的智能导游助手，熟悉景区的各种设施、门票价格、参观路线和景点介绍。你热情友好，能够为游客提供专业的咨询服务和引导。'
+            '你是一个专业的社保小助手，熟悉各类社会保险政策和办理流程。你耐心细致，能够用通俗易懂的语言为用户解释复杂的社保问题，帮助用户快速理解各种手续的办理要求。'
           );
           console.log('Persona set:', personaResult);
           
           // 4. 设置任务目标
           const objectiveResult = await NativeModules.AgentOSModule.setObjective(
             pageId, 
-            '为游客提供景区信息咨询，包括门票购买、景点介绍、游览路线推荐、设施位置等，提升游客的参观体验。'
+            '解决用户办理社保相关手续时遇到的问题，包括但不限于：社保缴费、医保报销、养老保险、工伤保险、失业保险等各类社保业务的咨询和指导。'
           );
           console.log('Objective set:', objectiveResult);
           
@@ -126,30 +131,58 @@ function ChatScreen(): React.JSX.Element {
     );
 
     // 组件卸载时清理PageAgent和事件监听
-    // 移除欢迎提示
-    return () => {
-      const cleanup = async () => {
-        try {
-          // 移除事件监听
-          actionExecutionListener.remove();
+            // 延迟3秒显示引领功能提示，避免用户来不及看清欢迎消息
+        const showTipTimeout = setTimeout(() => {
+          const tipMessage: ChatMessage = {
+            id: Date.now().toString(),
+            text: '💡 小贴士：我还可以为您提供引领服务！\n\n🗣️ 可以试试对我说：\n• "带我去茶水间"\n• "引领我到会议室"\n• "请带我去咖啡厅"（测试失败场景）\n\n我会根据不同地点给出相应的引领结果～',
+            isUser: false,
+            timestamp: new Date(),
+          };
+          setMessages(prev => [...prev, tipMessage]);
+        }, 3000); // 3秒后显示
 
-          if (NativeModules.AgentOSModule) {
-            await NativeModules.AgentOSModule.endPageAgent('ChatScreen');
-            console.log('PageAgent ended on component unmount');
-          }
-        } catch (error) {
-          console.error('Failed to end PageAgent:', error);
-        }
-      };
-      cleanup();
-    };
-  }, []);
+        return () => {
+          const cleanup = async () => {
+            try {
+              // 清理定时器
+              clearTimeout(showTipTimeout);
+              
+              // 移除事件监听
+              actionExecutionListener.remove();
+
+              if (NativeModules.AgentOSModule) {
+                await NativeModules.AgentOSModule.endPageAgent('ChatScreen');
+                console.log('PageAgent ended on component unmount');
+              }
+            } catch (error) {
+              console.error('Failed to end PageAgent:', error);
+            }
+          };
+          cleanup();
+        };
+      }, []);
 
   const backgroundStyle = {
-    backgroundColor: '#5B6FB1', // 使用图片中的蓝紫色背景
+    backgroundColor: isDarkMode ? '#1e1e1e' : '#f5f5f5',
   };
 
-  // 移除 addMessage 函数，因为我们不再使用消息列表
+  const addMessage = (text: string, isUser: boolean) => {
+    const newMessage: ChatMessage = {
+      id: Date.now().toString(),
+      text,
+      isUser,
+      timestamp: new Date(),
+    };
+    setMessages(prev => {
+      const updatedMessages = [...prev, newMessage];
+      // 延迟滚动到底部，确保消息已经渲染
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+      return updatedMessages;
+    });
+  };
 
   // 处理Action执行
   const handleActionExecution = async (data: ActionExecutionData) => {
@@ -174,7 +207,7 @@ function ChatScreen(): React.JSX.Element {
 
 🔄 正在启动引领服务...`;
 
-        // addMessage(actionTriggeredMessage, false); // 移除 addMessage
+        addMessage(actionTriggeredMessage, false);
         
         console.log(`开始引领用户前往：${location}`);
         
@@ -197,7 +230,7 @@ function ChatScreen(): React.JSX.Element {
 • 茶叶、咖啡包
 • 微波炉、冰箱`;
           
-          // addMessage(successMessage, false); // 移除 addMessage
+          addMessage(successMessage, false);
           
         } else if (location.includes('咖啡厅')) {
           console.log(`导航失败：咖啡厅暂时关闭`);
@@ -216,7 +249,7 @@ function ChatScreen(): React.JSX.Element {
 
 💡 可以说"带我去茶水间"试试成功场景～`;
           
-          // addMessage(failureMessage, false); // 移除 addMessage
+          addMessage(failureMessage, false);
           
         } else {
           console.log(`导航成功：开始引领前往 ${location}`);
@@ -229,12 +262,12 @@ function ChatScreen(): React.JSX.Element {
 🚶‍♂️ 请跟随我的指引前进
 ❓ 如需帮助请随时告诉我`;
           
-          // addMessage(defaultSuccessMessage, false); // 移除 addMessage
+          addMessage(defaultSuccessMessage, false);
         }
         
       } else {
         // 处理其他Action
-        // addMessage(`✅ 执行了Action: ${displayName}\n用户问题: ${userQuery}\n参数: ${JSON.stringify(parameters)}\nAction ID: ${sid}`, false); // 移除 addMessage
+        addMessage(`✅ 执行了Action: ${displayName}\n用户问题: ${userQuery}\n参数: ${JSON.stringify(parameters)}\nAction ID: ${sid}`, false);
         executionSuccess = true;
       }
       
@@ -252,32 +285,32 @@ function ChatScreen(): React.JSX.Element {
         console.log('Action notify response sent:', notifyResponse);
         
         if (executionSuccess) {
-          // addMessage(`🔔 系统通知：引领任务执行成功
-          // 
-          // ✅ 已向AgentOS系统报告任务完成
-          // 🎯 Action状态：SUCCEEDED
-          // 📋 任务ID：${sid}
-          // ⚡ AgentOS将根据成功状态进行后续处理`, false); // 移除 addMessage
+          addMessage(`🔔 系统通知：引领任务执行成功
+          
+✅ 已向AgentOS系统报告任务完成
+🎯 Action状态：SUCCEEDED
+📋 任务ID：${sid}
+⚡ AgentOS将根据成功状态进行后续处理`, false);
         } else {
-          // addMessage(`🔔 系统通知：引领任务执行失败
-          // 
-          // ❌ 已向AgentOS系统报告任务失败
-          // 🎯 Action状态：FAILED  
-          // 📋 任务ID：${sid}
-          // ⚡ AgentOS将根据失败状态进行后续处理`, false); // 移除 addMessage
+          addMessage(`🔔 系统通知：引领任务执行失败
+          
+❌ 已向AgentOS系统报告任务失败
+🎯 Action状态：FAILED  
+📋 任务ID：${sid}
+⚡ AgentOS将根据失败状态进行后续处理`, false);
         }
       } catch (notifyError) {
         console.error('Failed to notify action completion:', notifyError);
-        // addMessage(`⚠️ 系统通知失败
-        // 
-        // 🚫 无法向AgentOS系统报告执行状态
-        // �� 错误信息：${notifyError}
-        // 📞 请联系技术支持`, false); // 移除 addMessage
+        addMessage(`⚠️ 系统通知失败
+        
+🚫 无法向AgentOS系统报告执行状态
+🔧 错误信息：${notifyError}
+📞 请联系技术支持`, false);
       }
       
     } catch (error) {
       console.error('Error handling action execution:', error);
-      // addMessage('❌ 处理Action执行时发生错误', false); // 移除 addMessage
+      addMessage('❌ 处理Action执行时发生错误', false);
       
       // 即使处理出错，也要向原生层报告
       try {
@@ -294,24 +327,40 @@ function ChatScreen(): React.JSX.Element {
     }
   };
 
-  const handleSend = async (queryText: string) => {
-    try {
-      if (NativeModules.AgentOSModule) {
-        // 调用AgentOS SDK的query方法
-        console.log('Calling NativeModules.AgentOSModule.query with:', queryText);
-        const result = await NativeModules.AgentOSModule.query(queryText);
-        console.log('AgentOS query result:', result);
-      } else {
-        console.error('AgentOSModule not available');
+  const handleSend = async () => {
+    if (inputText.trim()) {
+      addMessage(inputText, true);
+      const queryText = inputText;
+      setInputText('');
+      
+      // 调试信息：检查AgentOSModule是否可用
+      console.log('=== ChatScreen handleSend called ===');
+      console.log('NativeModules:', Object.keys(NativeModules));
+      console.log('NativeModules.AgentOSModule:', NativeModules.AgentOSModule);
+      console.log('AgentOSModule from types:', AgentOSModule);
+      console.log('AgentOSModule.query:', AgentOSModule?.query);
+      
+      try {
+        if (NativeModules.AgentOSModule) {
+          // 调用AgentOS SDK的query方法
+          console.log('Calling NativeModules.AgentOSModule.query with:', queryText);
+          const result = await NativeModules.AgentOSModule.query(queryText);
+          console.log('AgentOS query result:', result);
+          
+          // 显示成功反馈消息
+          addMessage(`已接收到您的问题："${queryText}"，正在处理中...`, false);
+        } else {
+          console.error('AgentOSModule not available');
+          addMessage('原生模块不可用，无法调用AgentOS SDK', false);
+        }
+        
+      } catch (error) {
+        console.error('AgentOS query error:', error);
+        console.error('Error details:', error);
+        // 显示错误消息
+        addMessage('抱歉，处理您的请求时出现了问题，请稍后再试。', false);
       }
-    } catch (error) {
-      console.error('AgentOS query error:', error);
     }
-  };
-
-  const handleQuickButton = (question: string) => {
-    console.log(`Quick button pressed: ${question}`);
-    handleSend(question);
   };
 
   const handleVoice = async () => {
@@ -319,85 +368,101 @@ function ChatScreen(): React.JSX.Element {
     if (!isListening) {
       try {
         // 上传当前页面信息，帮助AgentOS理解当前页面内容
-        const interfaceInfo = `当前页面是猎户风景区欢迎页面，包含：
-        - 标题：猎户风景区欢迎你
-        - 中央图片：风景区图片
-        - 语音提示：你还可以问我
-        - 快捷问题按钮：如何进入后台、如何配置首页、优秀首页示例`;
+        const interfaceInfo = `当前页面是聊天界面，包含：
+        - 消息列表：显示${messages.length}条对话记录
+        - 输入框：用户可以输入文本消息
+        - 语音按钮：用户可以通过语音进行交互
+        - 发送按钮：发送用户消息`;
         
         await AgentOSModule.uploadInterfaceInfo(interfaceInfo);
         console.log('Interface info uploaded successfully');
         
         // 提示用户语音功能已激活
-        console.log('语音功能已激活，请开始说话...');
+        addMessage('🎤 语音功能已激活，请开始说话...', false);
         
         // 2秒后关闭语音监听状态
         setTimeout(() => {
           setIsListening(false);
-          console.log('语音识别已结束');
+          addMessage('语音识别已结束', false);
         }, 2000);
         
       } catch (error) {
         console.error('Voice activation error:', error);
         setIsListening(false);
-        console.log('语音功能暂时不可用');
+        addMessage('语音功能暂时不可用，请使用文字输入', false);
       }
     }
   };
 
-  // 移除原来的renderMessage函数，因为我们不再使用FlatList显示消息
+  const renderMessage = ({item}: {item: ChatMessage}) => (
+    <View style={styles.messageContainer}>
+      {item.isUser ? (
+        <View style={styles.userMessageContainer}>
+          <View style={styles.userMessage}>
+            <Text style={styles.userMessageText}>{item.text}</Text>
+          </View>
+          <Text style={styles.userIcon}>👤</Text>
+        </View>
+      ) : (
+        <View style={styles.botMessageContainer}>
+          <Text style={styles.botIcon}>🤖</Text>
+          <View style={styles.botMessage}>
+            <Text style={styles.botMessageText}>{item.text}</Text>
+          </View>
+        </View>
+      )}
+    </View>
+  );
 
   return (
     <SafeAreaView style={[styles.container, backgroundStyle]}>      
       {/* 标题栏 */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>
-          猎户风景区欢迎你
+        <Text style={[styles.headerTitle, {color: isDarkMode ? '#ffffff' : '#333333'}]}>
+          社保小助手哈哈
+        </Text>
+        <Text style={[styles.headerSubtitle, {color: isDarkMode ? '#cccccc' : '#666666'}]}>
+          社会保险咨询服务
         </Text>
       </View>
 
-      {/* 中间图片区域 */}
-      <View style={styles.imageContainer}>
-        <Image 
-          source={require('../assets/img/demo.png')} 
-          style={styles.centerImage} 
-          resizeMode="contain"
-        />
-        <View style={styles.speechBubble}>
-          <Text style={styles.speechText}>"我要买门票"</Text>
-        </View>
-      </View>
+      {/* 消息列表 */}
+      <FlatList
+        ref={flatListRef}
+        data={messages}
+        renderItem={renderMessage}
+        keyExtractor={item => item.id}
+        style={styles.messagesList}
+        contentContainerStyle={styles.messagesContent}
+        onContentSizeChange={() => {
+          // 当内容大小改变时也滚动到底部
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }}
+      />
 
-      {/* 语音提示区域 */}
-      <View style={styles.voiceHintContainer}>
+      {/* 输入区域 */}
+      <View style={styles.inputContainer}>
         <TouchableOpacity 
-          style={styles.micIconContainer}
+          style={[styles.voiceButton, isListening && styles.voiceButtonActive]} 
           onPress={handleVoice}
         >
-          <Text style={styles.micIcon}>🎤</Text>
+          <Text style={styles.voiceButtonText}>
+            {isListening ? '⏹️' : '🎤'}
+          </Text>
         </TouchableOpacity>
-        <Text style={styles.voiceHintText}>你还可以问我</Text>
-      </View>
-
-      {/* 快捷问题按钮区域 */}
-      <View style={styles.quickButtonsContainer}>
-        <TouchableOpacity 
-          style={styles.quickButton}
-          onPress={() => handleQuickButton('如何进入后台')}
-        >
-          <Text style={styles.quickButtonText}>如何进入后台</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={styles.quickButton}
-          onPress={() => handleQuickButton('如何配置首页')}
-        >
-          <Text style={styles.quickButtonText}>如何配置首页</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={styles.quickButton}
-          onPress={() => handleQuickButton('优秀首页示例')}
-        >
-          <Text style={styles.quickButtonText}>优秀首页示例</Text>
+        
+        <TextInput
+          style={[styles.textInput, {color: isDarkMode ? '#ffffff' : '#333333'}]}
+          value={inputText}
+          onChangeText={setInputText}
+          placeholder="输入消息..."
+          placeholderTextColor={isDarkMode ? '#888888' : '#999999'}
+          multiline
+          maxLength={500}
+        />
+        
+        <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
+          <Text style={styles.sendButtonText}>发送</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -410,82 +475,113 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 16,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
     alignItems: 'center',
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginTop: 20,
-  },
-  imageContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  centerImage: {
-    width: '90%',
-    height: '70%',
-    borderRadius: 10,
-  },
-  speechBubble: {
-    position: 'absolute',
-    top: '20%',
-    right: '25%',
-    backgroundColor: 'white',
-    borderRadius: 20,
-    padding: 15,
-    maxWidth: '40%',
-    transform: [{rotate: '-5deg'}],
-  },
-  speechText: {
-    color: '#5B6FB1',
-    fontWeight: 'bold',
     fontSize: 18,
-    textAlign: 'center',
+    fontWeight: 'bold',
+    marginBottom: 4,
   },
-  voiceHintContainer: {
+  headerSubtitle: {
+    fontSize: 14,
+  },
+  messagesList: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  messagesContent: {
+    padding: 8,
+  },
+  messageContainer: {
+    marginVertical: 4,
+  },
+  userMessageContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'flex-end',
-    marginBottom: 10,
-    paddingRight: 30,
-    marginTop: 10,
+    alignItems: 'flex-end',
   },
-  micIconContainer: {
+  userMessage: {
+    backgroundColor: '#2196F3',
+    padding: 12,
+    borderRadius: 12,
+    maxWidth: '70%',
+    marginRight: 8,
+  },
+  userMessageText: {
+    color: '#ffffff',
+    fontSize: 16,
+  },
+  userIcon: {
+    fontSize: 24,
+  },
+  botMessageContainer: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
+  },
+  botMessage: {
+    backgroundColor: '#f0f0f0',
+    padding: 12,
+    borderRadius: 12,
+    maxWidth: '70%',
+    marginLeft: 8,
+  },
+  botMessageText: {
+    color: '#333333',
+    fontSize: 16,
+  },
+  botIcon: {
+    fontSize: 24,
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    padding: 8,
+    backgroundColor: '#ffffff',
+    alignItems: 'flex-end',
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  voiceButton: {
     backgroundColor: '#4CAF50',
     width: 40,
     height: 40,
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
+    marginRight: 8,
   },
-  micIcon: {
-    fontSize: 20,
-    color: 'white',
+  voiceButtonActive: {
+    backgroundColor: '#FF5722',
   },
-  voiceHintText: {
-    color: 'white',
+  voiceButtonText: {
     fontSize: 18,
-    fontWeight: 'bold',
   },
-  quickButtonsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: 20,
-    marginBottom: 30,
-  },
-  quickButton: {
-    backgroundColor: '#8E6BFF',
-    paddingVertical: 10,
-    paddingHorizontal: 15,
+  textInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
     borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    fontSize: 16,
+    maxHeight: 100,
+    backgroundColor: '#f9f9f9',
+    marginRight: 8,
   },
-  quickButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
+  sendButton: {
+    backgroundColor: '#2196F3',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    justifyContent: 'center',
+  },
+  sendButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 
