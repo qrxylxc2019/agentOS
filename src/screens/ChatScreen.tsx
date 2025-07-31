@@ -287,14 +287,14 @@ function ChatScreen(): React.JSX.Element {
           {/* 标题栏 */}
           <View style={styles.header}>
             <Text style={styles.headerTitle}>
-              猎户风景区欢迎你
+              政务中心欢迎您！
             </Text>
           </View>
 
           {/* 中间图片区域 */}
           <View style={styles.imageContainer}>
             <Image
-              source={require('../assets/img/demo.png')}
+              source={require('../assets/img/demo.gif')}
               style={styles.centerImage}
               resizeMode="contain"
             />
@@ -305,12 +305,13 @@ function ChatScreen(): React.JSX.Element {
         <View style={styles.rightColumn}>
           {/* 语音提示区域 */}
           <View style={styles.voiceHintContainer}>
-            <TouchableOpacity
-              style={styles.micIconContainer}
-              onPress={handleVoice}
-            >
-              <Text style={styles.micIcon}>🎤</Text>
-            </TouchableOpacity>
+            <View style={styles.micIconContainer}>
+              <Image
+                source={require('../assets/img/mic.png')}
+                style={styles.micIcon}
+                resizeMode="contain"
+              />
+            </View>
             <Text style={styles.voiceHintText}>你还可以问我</Text>
           </View>
 
@@ -318,63 +319,51 @@ function ChatScreen(): React.JSX.Element {
           <ScrollView style={styles.quickButtonsContainer} showsVerticalScrollIndicator={false}>
             <TouchableOpacity
               style={styles.quickButton}
-              onPress={() => handleQuickButton('如何进入后台')}
+              onPress={() => handleQuickButton('社保卡基本信息查询')}
             >
-              <Text style={styles.quickButtonText}>如何进入后台</Text>
+              <Text style={styles.quickButtonText}>社保卡基本信息查询</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickButton}
-              onPress={() => handleQuickButton('如何配置首页')}
+              onPress={() => handleQuickButton('企业职工人员信息变更业务')}
             >
-              <Text style={styles.quickButtonText}>如何配置首页</Text>
+              <Text style={styles.quickButtonText}>企业职工人员信息变更业务</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickButton}
-              onPress={() => handleQuickButton('优秀首页示例')}
+              onPress={() => handleQuickButton('灵活就业人员参保信息查询')}
             >
-              <Text style={styles.quickButtonText}>优秀首页示例</Text>
+              <Text style={styles.quickButtonText}>灵活就业人员参保信息查询</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickButton}
-              onPress={() => handleQuickButton('门票价格查询')}
+              onPress={() => handleQuickButton('领取失业金期间按月登记')}
             >
-              <Text style={styles.quickButtonText}>门票价格查询</Text>
+              <Text style={styles.quickButtonText}>领取失业金期间按月登记</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickButton}
-              onPress={() => handleQuickButton('景点介绍')}
+              onPress={() => handleQuickButton('机关事业单位特殊工种如何办理退休手续？')}
             >
-              <Text style={styles.quickButtonText}>景点介绍</Text>
+              <Text style={styles.quickButtonText}>机关事业单位特殊工种如何办理退休手续？</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickButton}
-              onPress={() => handleQuickButton('游览路线推荐')}
+              onPress={() => handleQuickButton('领取失业金期间按月登记')}
             >
-              <Text style={styles.quickButtonText}>游览路线推荐</Text>
+              <Text style={styles.quickButtonText}>领取失业金期间按月登记</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickButton}
-              onPress={() => handleQuickButton('交通指南')}
+              onPress={() => handleQuickButton('城乡居民生存认证')}
             >
-              <Text style={styles.quickButtonText}>交通指南</Text>
+              <Text style={styles.quickButtonText}>城乡居民生存认证</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickButton}
-              onPress={() => handleQuickButton('开放时间')}
+              onPress={() => handleQuickButton('工伤异地居住（就医） 备案')}
             >
-              <Text style={styles.quickButtonText}>开放时间</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.quickButton}
-              onPress={() => handleQuickButton('餐饮服务')}
-            >
-              <Text style={styles.quickButtonText}>餐饮服务</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.quickButton}
-              onPress={() => handleQuickButton('住宿推荐')}
-            >
-              <Text style={styles.quickButtonText}>住宿推荐</Text>
+              <Text style={styles.quickButtonText}>工伤异地居住（就医） 备案</Text>
             </TouchableOpacity>
           </ScrollView>
         </View>
@@ -455,8 +444,9 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   micIcon: {
-    fontSize: 20,
-    color: 'white',
+    width: 24,
+    height: 24,
+    tintColor: 'white',
   },
   voiceHintText: {
     color: 'white',
