@@ -9,11 +9,9 @@ import com.facebook.react.bridge.WritableNativeMap
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.WritableNativeArray
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import android.os.Bundle
 import kotlinx.coroutines.*
-import kotlin.coroutines.Continuation
-import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
 import com.ainirobot.agent.AgentCore
 import com.ainirobot.agent.PageAgent
 import com.ainirobot.agent.action.Action
@@ -22,6 +20,16 @@ import com.ainirobot.agent.base.Parameter
 import com.ainirobot.agent.base.ParameterType
 import com.ainirobot.agent.base.ActionResult
 import com.ainirobot.agent.base.ActionStatus
+import com.ainirobot.agent.coroutine.AOCoroutineScope
+import com.ainirobot.coreservice.client.ApiListener
+import com.ainirobot.coreservice.client.listener.CommandListener
+import com.ainirobot.coreservice.client.listener.ActionListener
+import com.ainirobot.coreservice.client.RobotApi
+import com.ainirobot.coreservice.client.Definition
+import android.content.Intent
+import org.json.JSONArray
+import org.json.JSONException
+import org.json.JSONObject
 
 class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
@@ -32,11 +40,11 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     // 存储PageAgent实例的Map，以pageId为key
     private val pageAgents = mutableMapOf<String, PageAgent>()
     
-    // 存储Action执行结果等待的协程续体，以actionSid为key
-    private val actionContinuations = mutableMapOf<String, Continuation<Boolean>>()
-    
     // 存储Action实例，以actionSid为key，用于后续调用notify()
     private val actionInstances = mutableMapOf<String, Action>()
+    
+    // 存储导航回调，以callbackId为key
+    private val navigationCallbacks = mutableMapOf<String, Promise>()
 
     override fun getName(): String {
         return "AgentOSModule"
@@ -453,28 +461,36 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     Log.d(TAG, "Action: ${action.name}, sid: ${action.sid}")
                     Log.d(TAG, "Params: $params")
                     
-                    // 使用协程同步等待React Native的返回值
-                    return runBlocking {
-                        Log.d(TAG, "Starting coroutine to wait for RN response")
+                    try {
+                        // 存储Action实例，用于后续notify调用
+                        actionInstances[action.sid] = action
                         
-                        // 启动协程发送事件到React Native并等待返回值
-                        suspendCancellableCoroutine<Boolean> { continuation ->
-                            // 存储协程续体和Action实例，等待React Native调用回应
-                            actionContinuations[action.sid] = continuation
-                            actionInstances[action.sid] = action
-                            
-                            // 在主线程中发送事件到React Native
-                            currentActivity?.runOnUiThread {
-                                handleActionExecution(action, params)
-                            }
-                            
-                            // 设置超时处理
-                            continuation.invokeOnCancellation {
-                                Log.w(TAG, "Action execution timeout or cancelled for sid: ${action.sid}")
-                                actionContinuations.remove(action.sid)
-                                actionInstances.remove(action.sid)
+                        // 立即启动异步处理，不等待结果
+                        AOCoroutineScope.launch {
+                            try {
+                                Log.d(TAG, "=== handleActionExecutionAsync called ===")
+                                // 发送事件到React Native进行异步处理
+                                currentActivity?.runOnUiThread {
+                                    handleActionExecution(action, params)
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error in async action handling", e)
+                                // 如果处理失败，自动notify失败
+                                try {
+                                    action.notify(ActionResult(ActionStatus.FAILED))
+                                } catch (notifyError: Exception) {
+                                    Log.e(TAG, "Error notifying action failure", notifyError)
+                                }
                             }
                         }
+                        
+                        // 立即返回true，表示我们要处理这个Action
+                        return true
+                        
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error in ActionExecutor.onExecute", e)
+                        actionInstances.remove(action.sid)
+                        return false
                     }
                 }
             }
@@ -558,45 +574,30 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             
         } catch (e: Exception) {
             Log.e(TAG, "Error in handleActionExecution", e)
-            // 出错时恢复协程并返回false，同时清理Action实例
-            val continuation = actionContinuations.remove(action.sid)
+            // 出错时调用notify告知失败，然后清理Action实例
             val actionInstance = actionInstances.remove(action.sid)
-            continuation?.resume(false)
-            // 如果有Action实例，也需要调用notify告知失败
             actionInstance?.notify(ActionResult(ActionStatus.FAILED))
         }
         
         Log.d(TAG, "=== handleActionExecution() finished ===")
     }
 
-    // =============== Action执行结果回调方法 ===============
+    // =============== Action执行结果回调方法（已弃用，保留兼容性）===============
     
     @ReactMethod
     fun respondToActionExecution(actionSid: String, success: Boolean, promise: Promise) {
         Log.d(TAG, "=== AgentOSModule.respondToActionExecution() called ===")
         Log.d(TAG, "ActionSid: '$actionSid', Success: $success")
+        Log.w(TAG, "respondToActionExecution is deprecated, please use notifyActionComplete directly")
         
         try {
-            // 找到等待的协程续体（注意：不remove actionInstances，notify时还需要用）
-            val continuation = actionContinuations.remove(actionSid)
-            
-            if (continuation != null) {
-                Log.d(TAG, "Found waiting continuation for actionSid: $actionSid")
-                
-                // 恢复协程，返回React Native提供的ActionExecutor结果
-                continuation.resume(success)
-                
-                // 返回成功响应
-                val result = WritableNativeMap()
-                result.putString("status", "success")
-                result.putString("message", "ActionExecutor returned with result")
-                result.putString("actionSid", actionSid)
-                result.putBoolean("success", success)
-                promise.resolve(result)
-            } else {
-                Log.w(TAG, "No waiting continuation or action found for actionSid: $actionSid")
-                promise.reject("ACTION_NOT_FOUND", "No waiting action found for sid: $actionSid")
-            }
+            // 在简化的流程中，这个方法不再需要，直接返回成功状态
+            val result = WritableNativeMap()
+            result.putString("status", "success")
+            result.putString("message", "respondToActionExecution called but deprecated")
+            result.putString("actionSid", actionSid)
+            result.putBoolean("success", success)
+            promise.resolve(result)
             
         } catch (e: Exception) {
             Log.e(TAG, "Error in respondToActionExecution method", e)
@@ -615,7 +616,7 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         
         try {
             // 找到对应的Action对象
-            val action = actionInstances[actionSid] // 注意：这里不remove，因为可能还需要用
+            val action = actionInstances.remove(actionSid) // 直接remove，用完即删
             
             if (action != null) {
                 Log.d(TAG, "Found action for actionSid: $actionSid, calling notify()")
@@ -628,6 +629,8 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     Log.d(TAG, "Calling action.notify() with FAILED status")
                     action.notify(ActionResult(ActionStatus.FAILED))
                 }
+                
+                Log.d(TAG, "Action instance cleaned up for actionSid: $actionSid")
                 
                 // 返回成功响应
                 val result = WritableNativeMap()
@@ -647,5 +650,666 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         }
         
         Log.d(TAG, "=== AgentOSModule.notifyActionComplete() finished ===")
+    }
+
+    /**
+     * 检查机器人是否已定位
+     * @param promise React Native的Promise对象，用于返回结果
+     */
+    @ReactMethod
+    fun checkRobotLocalization(promise: Promise) {
+        Log.d(TAG, "=== AgentOSModule.checkRobotLocalization() called ===")
+        
+        try {
+            val reqId = 0
+            val callResult = RobotApi.getInstance().isRobotEstimate(reqId, object : CommandListener() {
+                override fun onResult(result: Int, message: String) {
+                    Log.d(TAG, "Robot localization check result: $result, message: $message")
+                    
+                    val response = WritableNativeMap()
+                    response.putString("status", "success")
+                    response.putInt("result", result)
+                    response.putString("message", message)
+                    
+                    if ("true" == message) {
+                        Log.d(TAG, "当前已定位")
+                        response.putBoolean("isLocalized", true)
+                        response.putString("description", "机器人当前已定位")
+                    } else {
+                        Log.d(TAG, "当前未定位")
+                        response.putBoolean("isLocalized", false)
+                        response.putString("description", "机器人当前未定位")
+                    }
+                    
+                    promise.resolve(response)
+                }
+            })
+            
+            // 检查RobotApi调用是否立即失败
+            Log.d(TAG, "RobotApi.isRobotEstimate call result: $callResult")
+            if (callResult != 0) {
+                // 如果返回值不是0，说明调用失败，立即返回错误
+                Log.w(TAG, "RobotApi.isRobotEstimate call failed with code: $callResult")
+                val errorResponse = WritableNativeMap()
+                errorResponse.putString("status", "error")
+                errorResponse.putString("message", "Robot API call failed")
+                errorResponse.putBoolean("isLocalized", false)
+                errorResponse.putString("description", "机器人连接异常，无法检查定位状态")
+                errorResponse.putInt("errorCode", callResult)
+                promise.resolve(errorResponse)
+                return
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in checkRobotLocalization method", e)
+            val errorResponse = WritableNativeMap()
+            errorResponse.putString("status", "error")
+            errorResponse.putString("message", "Failed to check robot localization: ${e.message}")
+            errorResponse.putBoolean("isLocalized", false)
+            errorResponse.putString("description", "检查定位状态时发生错误")
+            promise.resolve(errorResponse)
+        }
+        
+        Log.d(TAG, "=== AgentOSModule.checkRobotLocalization() finished ===")
+    }
+
+    /**
+     * 启动机器人定位（重定位）
+     * @param promise React Native的Promise对象，用于返回结果
+     */
+    @ReactMethod
+    fun startRobotReposition(promise: Promise) {
+        Log.d(TAG, "=== AgentOSModule.startRobotReposition() called ===")
+        
+        try {
+            val visionIntent = Intent()
+            visionIntent.setAction(Definition.ACTION_REPOSITION)
+            visionIntent.putExtra(Definition.REPOSITION_VISION, true)
+            
+            // 获取当前的ReactContext来发送广播
+            val context = reactApplicationContext
+            context.sendBroadcast(visionIntent)
+            
+            Log.d(TAG, "Reposition broadcast sent successfully")
+            
+            val response = WritableNativeMap()
+            response.putString("status", "success")
+            response.putString("message", "机器人定位启动成功")
+            response.putString("description", "已发送重定位广播指令")
+            
+            promise.resolve(response)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in startRobotReposition method", e)
+            val errorResponse = WritableNativeMap()
+            errorResponse.putString("status", "error")
+            errorResponse.putString("message", "Failed to start robot reposition: ${e.message}")
+            errorResponse.putString("description", "启动机器人定位时发生错误")
+            promise.resolve(errorResponse)
+        }
+        
+        Log.d(TAG, "=== AgentOSModule.startRobotReposition() finished ===")
+    }
+
+    /**
+     * 获取地图点位列表
+     * @param promise React Native的Promise对象，用于返回结果
+     */
+    @ReactMethod
+    fun getPlaceList(promise: Promise) {
+        Log.d(TAG, "=== AgentOSModule.getPlaceList() called ===")
+        
+        try {
+            val reqId = 0
+            val callResult = RobotApi.getInstance().getPlaceList(reqId, object : CommandListener() {
+                override fun onResult(result: Int, message: String) {
+                    Log.d(TAG, "Place list result: $result, message: $message")
+                    
+                    try {
+                        val placeList = mutableListOf<String>()
+                        val placeDetails = WritableNativeArray()
+                        
+                        val jsonArray = JSONArray(message)
+                        val length = jsonArray.length()
+                        
+                        for (i in 0 until length) {
+                            val json = jsonArray.getJSONObject(i)
+                            val x = json.getDouble("x") // x坐标
+                            val y = json.getDouble("y") // y坐标
+                            val theta = json.getDouble("theta") // 面朝方向
+                            val name = json.getString("name") // 位置名称
+                            
+                            Log.i(TAG, "位置名称: $name, x坐标: $x, y坐标: $y, 面朝方向: $theta")
+                            
+                            // 过滤掉回充点和充电桩
+                            if (!name.contains("回充点") && !name.contains("充电桩")) {
+                                placeList.add(name)
+                                
+                                // 创建详细信息对象
+                                val placeDetail = WritableNativeMap()
+                                placeDetail.putString("name", name)
+                                placeDetail.putDouble("x", x)
+                                placeDetail.putDouble("y", y)
+                                placeDetail.putDouble("theta", theta)
+                                placeDetails.pushMap(placeDetail)
+                            }
+                        }
+                        
+                        Log.i(TAG, "过滤后的地点列表: $placeList")
+                        
+                        val response = WritableNativeMap()
+                        response.putString("status", "success")
+                        response.putString("message", "获取点位列表成功")
+                        response.putInt("result", result)
+                        response.putInt("totalCount", length)
+                        response.putInt("filteredCount", placeList.size)
+                        
+                        // 添加点位名称列表
+                        val placeNameArray = WritableNativeArray()
+                        for (placeName in placeList) {
+                            placeNameArray.pushString(placeName)
+                        }
+                        response.putArray("placeNames", placeNameArray)
+                        
+                        // 添加详细信息列表
+                        response.putArray("placeDetails", placeDetails)
+                        
+                        promise.resolve(response)
+                        
+                    } catch (e: JSONException) {
+                        Log.e(TAG, "JSON parsing error in getPlaceList", e)
+                        val errorResponse = WritableNativeMap()
+                        errorResponse.putString("status", "error")
+                        errorResponse.putString("message", "解析点位数据时发生JSON错误: ${e.message}")
+                        errorResponse.putArray("placeNames", WritableNativeArray())
+                        errorResponse.putArray("placeDetails", WritableNativeArray())
+                        promise.resolve(errorResponse)
+                    } catch (e: NullPointerException) {
+                        Log.e(TAG, "Null pointer error in getPlaceList", e)
+                        val errorResponse = WritableNativeMap()
+                        errorResponse.putString("status", "error")
+                        errorResponse.putString("message", "获取点位数据时发生空指针错误: ${e.message}")
+                        errorResponse.putArray("placeNames", WritableNativeArray())
+                        errorResponse.putArray("placeDetails", WritableNativeArray())
+                        promise.resolve(errorResponse)
+                    }
+                }
+            })
+            
+            // 检查RobotApi调用是否立即失败
+            Log.d(TAG, "RobotApi.getPlaceList call result: $callResult")
+            if (callResult != 0) {
+                // 如果返回值不是0，说明调用失败，立即返回错误
+                Log.w(TAG, "RobotApi.getPlaceList call failed with code: $callResult")
+                val errorResponse = WritableNativeMap()
+                errorResponse.putString("status", "error")
+                errorResponse.putString("message", "Robot API call failed")
+                errorResponse.putArray("placeNames", WritableNativeArray())
+                errorResponse.putArray("placeDetails", WritableNativeArray())
+                errorResponse.putInt("errorCode", callResult)
+                promise.resolve(errorResponse)
+                return
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in getPlaceList method", e)
+            val errorResponse = WritableNativeMap()
+            errorResponse.putString("status", "error")
+            errorResponse.putString("message", "Failed to get place list: ${e.message}")
+            errorResponse.putArray("placeNames", WritableNativeArray())
+            errorResponse.putArray("placeDetails", WritableNativeArray())
+            promise.resolve(errorResponse)
+        }
+        
+        Log.d(TAG, "=== AgentOSModule.getPlaceList() finished ===")
+    }
+
+    /**
+     * 开始导航到指定地点
+     * @param destName 目标地点名称
+     * @param promise React Native的Promise对象，用于返回结果
+     */
+    @ReactMethod
+    fun startNavigation(destName: String, promise: Promise) {
+        Log.d(TAG, "=== AgentOSModule.startNavigation() called ===")
+        Log.d(TAG, "Navigation destination: $destName")
+        
+        try {
+            val reqId = 0
+            val coordinateDeviation = 0.2 // 坐标偏差
+            val timeout = 30000L // 超时时间30秒
+            
+            val callResult = RobotApi.getInstance().startNavigation(reqId, destName, coordinateDeviation, timeout, object : ActionListener() {
+                override fun onResult(status: Int, response: String) {
+                    Log.d(TAG, "Navigation result - status: $status, response: $response")
+                    
+                    when (status) {
+                        Definition.RESULT_OK -> {
+                            if ("true" == response) {
+                                Log.i(TAG, "导航成功")
+                                
+                                // 创建事件用的Map对象
+                                val eventResponse = WritableNativeMap()
+                                eventResponse.putString("status", "success")
+                                eventResponse.putString("message", "导航完成成功")
+                                eventResponse.putString("destination", destName)
+                                eventResponse.putBoolean("navigationCompleted", true)
+                                eventResponse.putString("description", "机器人已成功到达目标地点")
+                                
+                                // 创建Promise用的Map对象
+                                val promiseResponse = WritableNativeMap()
+                                promiseResponse.putString("status", "success")
+                                promiseResponse.putString("message", "导航完成成功")
+                                promiseResponse.putString("destination", destName)
+                                promiseResponse.putBoolean("navigationCompleted", true)
+                                promiseResponse.putString("description", "机器人已成功到达目标地点")
+                                
+                                // 发送导航成功事件到React Native
+                                sendNavigationEvent("NavigationSuccess", eventResponse)
+                                promise.resolve(promiseResponse)
+                            } else {
+                                Log.i(TAG, "导航失败")
+                                
+                                // 创建事件用的Map对象
+                                val eventResponse = WritableNativeMap()
+                                eventResponse.putString("status", "failure")
+                                eventResponse.putString("message", "导航启动失败")
+                                eventResponse.putString("destination", destName)
+                                eventResponse.putBoolean("navigationStarted", false)
+                                eventResponse.putString("description", "机器人导航启动失败")
+                                
+                                // 创建Promise用的Map对象
+                                val promiseResponse = WritableNativeMap()
+                                promiseResponse.putString("status", "failure")
+                                promiseResponse.putString("message", "导航启动失败")
+                                promiseResponse.putString("destination", destName)
+                                promiseResponse.putBoolean("navigationStarted", false)
+                                promiseResponse.putString("description", "机器人导航启动失败")
+                                
+                                sendNavigationEvent("NavigationFailure", eventResponse)
+                                promise.resolve(promiseResponse)
+                            }
+                        }
+                        else -> {
+                            // 创建事件用的Map对象
+                            val eventResponse = WritableNativeMap()
+                            eventResponse.putString("status", "error")
+                            eventResponse.putString("message", "导航过程中发生未知错误")
+                            eventResponse.putString("destination", destName)
+                            eventResponse.putBoolean("navigationStarted", false)
+                            eventResponse.putInt("errorStatus", status)
+                            
+                            // 创建Promise用的Map对象
+                            val promiseResponse = WritableNativeMap()
+                            promiseResponse.putString("status", "error")
+                            promiseResponse.putString("message", "导航过程中发生未知错误")
+                            promiseResponse.putString("destination", destName)
+                            promiseResponse.putBoolean("navigationStarted", false)
+                            promiseResponse.putInt("errorStatus", status)
+                            
+                            sendNavigationEvent("NavigationError", eventResponse)
+                            promise.resolve(promiseResponse)
+                        }
+                    }
+                }
+
+                override fun onError(errorCode: Int, errorString: String?) {
+                    Log.e(TAG, "Navigation error - code: $errorCode, message: ${errorString ?: "null"}")
+                    
+                    // 创建事件用的Map对象
+                    val eventResponse = WritableNativeMap()
+                    eventResponse.putString("status", "error")
+                    eventResponse.putInt("errorCode", errorCode)
+                    eventResponse.putString("errorString", errorString ?: "Unknown error")
+                    eventResponse.putString("destination", destName)
+                    eventResponse.putBoolean("navigationStarted", false)
+                    
+                    // 创建Promise用的Map对象
+                    val promiseResponse = WritableNativeMap()
+                    promiseResponse.putString("status", "error")
+                    promiseResponse.putInt("errorCode", errorCode)
+                    promiseResponse.putString("errorString", errorString ?: "Unknown error")
+                    promiseResponse.putString("destination", destName)
+                    promiseResponse.putBoolean("navigationStarted", false)
+                    
+                    when (errorCode) {
+                        Definition.ERROR_NOT_ESTIMATE -> {
+                            Log.i(TAG, "当前未定位")
+                            val message = "导航失败：机器人当前未定位"
+                            val description = "请先进行机器人定位后再尝试导航"
+                            val errorType = "NOT_LOCALIZED"
+                            
+                            eventResponse.putString("message", message)
+                            eventResponse.putString("description", description)
+                            eventResponse.putString("errorType", errorType)
+                            promiseResponse.putString("message", message)
+                            promiseResponse.putString("description", description)
+                            promiseResponse.putString("errorType", errorType)
+                        }
+                        Definition.ERROR_IN_DESTINATION -> {
+                            Log.i(TAG, "当前机器人已经在目的地范围内")
+                            val message = "导航完成：机器人已在目标地点"
+                            val description = "机器人当前已经在目的地范围内"
+                            val errorType = "ALREADY_AT_DESTINATION"
+                            
+                            eventResponse.putString("message", message)
+                            eventResponse.putString("description", description)
+                            eventResponse.putString("errorType", errorType)
+                            promiseResponse.putString("message", message)
+                            promiseResponse.putString("description", description)
+                            promiseResponse.putString("errorType", errorType)
+                        }
+                        Definition.ERROR_DESTINATION_NOT_EXIST -> {
+                            Log.i(TAG, "导航目的地不存在")
+                            val message = "导航失败：目标地点不存在"
+                            val description = "指定的目标地点在地图中不存在"
+                            val errorType = "DESTINATION_NOT_EXIST"
+                            
+                            eventResponse.putString("message", message)
+                            eventResponse.putString("description", description)
+                            eventResponse.putString("errorType", errorType)
+                            promiseResponse.putString("message", message)
+                            promiseResponse.putString("description", description)
+                            promiseResponse.putString("errorType", errorType)
+                        }
+                        Definition.ERROR_DESTINATION_CAN_NOT_ARRAIVE -> {
+                            Log.i(TAG, "避障超时，目的地不能到达")
+                            val message = "导航失败：目标地点无法到达"
+                            val description = "避障超时，目的地不能到达"
+                            val errorType = "CANNOT_ARRIVE"
+                            
+                            eventResponse.putString("message", message)
+                            eventResponse.putString("description", description)
+                            eventResponse.putString("errorType", errorType)
+                            promiseResponse.putString("message", message)
+                            promiseResponse.putString("description", description)
+                            promiseResponse.putString("errorType", errorType)
+                        }
+                        Definition.ACTION_RESPONSE_ALREADY_RUN -> {
+                            Log.i(TAG, "当前接口已经调用，请先停止，才能再次调用")
+                            val message = "导航失败：导航任务已在进行中"
+                            val description = "请先停止当前导航任务再开始新的导航"
+                            val errorType = "ALREADY_RUNNING"
+                            
+                            eventResponse.putString("message", message)
+                            eventResponse.putString("description", description)
+                            eventResponse.putString("errorType", errorType)
+                            promiseResponse.putString("message", message)
+                            promiseResponse.putString("description", description)
+                            promiseResponse.putString("errorType", errorType)
+                        }
+                        Definition.ACTION_RESPONSE_REQUEST_RES_ERROR -> {
+                            Log.i(TAG, "已经有需要控制底盘的接口调用，请先停止，才能继续调用")
+                            val message = "导航失败：底盘控制冲突"
+                            val description = "已有其他接口控制底盘，请先停止后再导航"
+                            val errorType = "RESOURCE_CONFLICT"
+                            
+                            eventResponse.putString("message", message)
+                            eventResponse.putString("description", description)
+                            eventResponse.putString("errorType", errorType)
+                            promiseResponse.putString("message", message)
+                            promiseResponse.putString("description", description)
+                            promiseResponse.putString("errorType", errorType)
+                        }
+                        else -> {
+                            val message = "导航失败：${errorString ?: "未知错误"}"
+                            val description = "导航过程中发生错误：${errorString ?: "未知错误"}"
+                            val errorType = "UNKNOWN_ERROR"
+                            
+                            eventResponse.putString("message", message)
+                            eventResponse.putString("description", description)
+                            eventResponse.putString("errorType", errorType)
+                            promiseResponse.putString("message", message)
+                            promiseResponse.putString("description", description)
+                            promiseResponse.putString("errorType", errorType)
+                        }
+                    }
+                    
+                    // 发送事件和resolve Promise使用不同的Map对象
+                    sendNavigationEvent("NavigationError", eventResponse)
+                    promise.resolve(promiseResponse)
+                }
+
+                override fun onStatusUpdate(status: Int, data: String) {
+                    Log.d(TAG, "Navigation status update - status: $status, data: $data")
+                    
+                    val statusResponse = WritableNativeMap()
+                    statusResponse.putInt("statusCode", status)
+                    statusResponse.putString("statusData", data)
+                    statusResponse.putString("destination", destName)
+                    
+                    when (status) {
+                        Definition.STATUS_NAVI_AVOID -> {
+                            Log.i(TAG, "当前路线已经被障碍物堵死")
+                            statusResponse.putString("statusType", "ROUTE_BLOCKED")
+                            statusResponse.putString("message", "导航状态：路线被障碍物阻挡")
+                            statusResponse.putString("description", "当前路线已被障碍物堵死，正在寻找替代路径")
+                        }
+                        Definition.STATUS_NAVI_AVOID_END -> {
+                            Log.i(TAG, "障碍物已移除")
+                            statusResponse.putString("statusType", "ROUTE_CLEAR")
+                            statusResponse.putString("message", "导航状态：路线障碍已清除")
+                            statusResponse.putString("description", "障碍物已移除，继续导航")
+                        }
+                        else -> {
+                            statusResponse.putString("statusType", "OTHER")
+                            statusResponse.putString("message", "导航状态更新")
+                            statusResponse.putString("description", "导航状态：$data")
+                        }
+                    }
+                    
+                    sendNavigationEvent("NavigationStatusUpdate", statusResponse)
+                }
+            })
+            
+            // 检查RobotApi调用是否立即失败
+            Log.d(TAG, "RobotApi.startNavigation call result: $callResult")
+            if (callResult != 0) {
+                // 如果返回值不是0，说明调用失败，立即返回错误
+                Log.w(TAG, "RobotApi.startNavigation call failed with code: $callResult")
+                val errorResponse = WritableNativeMap()
+                errorResponse.putString("status", "error")
+                errorResponse.putString("message", "Navigation API call failed")
+                errorResponse.putString("destination", destName)
+                errorResponse.putString("description", "机器人导航服务异常，无法启动导航")
+                errorResponse.putInt("errorCode", callResult)
+                promise.resolve(errorResponse)
+                return
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in startNavigation method", e)
+            val errorResponse = WritableNativeMap()
+            errorResponse.putString("status", "error")
+            errorResponse.putString("message", "Failed to start navigation: ${e.message}")
+            errorResponse.putString("destination", destName)
+            errorResponse.putBoolean("navigationStarted", false)
+            errorResponse.putString("description", "启动导航时发生系统错误")
+            promise.resolve(errorResponse)
+        }
+        
+        Log.d(TAG, "=== AgentOSModule.startNavigation() finished ===")
+    }
+
+    @ReactMethod
+    fun startNavigationWithCallback(destName: String, promise: Promise) {
+        Log.d(TAG, "=== AgentOSModule.startNavigationWithCallback() called ===")
+        Log.d(TAG, "Navigation destination: $destName")
+        
+        try {
+            // 保存Promise用于后续回调
+            val callbackId = System.currentTimeMillis().toString()
+            navigationCallbacks[callbackId] = promise
+            
+            val callResult = RobotApi.getInstance().startNavigation(0, destName, 0.2, 30000, object : ActionListener() {
+                override fun onResult(status: Int, response: String) {
+                    Log.d(TAG, "Navigation result - status: $status, response: $response")
+                    
+                    when (status) {
+                        Definition.RESULT_OK -> {
+                            if ("true" == response) {
+                                Log.i(TAG, "导航成功")
+                                // 导航成功，通知React Native回调
+                                currentActivity?.runOnUiThread {
+                                    try {
+                                        reactApplicationContext
+                                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                                            .emit("NavigationCallbackSuccess", WritableNativeMap().apply {
+                                                putString("callbackId", callbackId)
+                                                putString("destination", destName)
+                                            })
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Error sending navigation success callback", e)
+                                    }
+                                }
+                            } else {
+                                Log.i(TAG, "导航失败")
+                                // 导航失败
+                                currentActivity?.runOnUiThread {
+                                    try {
+                                        reactApplicationContext
+                                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                                            .emit("NavigationCallbackError", WritableNativeMap().apply {
+                                                putString("callbackId", callbackId)
+                                                putInt("errorCode", -1)
+                                                putString("errorMessage", "Navigation failed")
+                                                putString("destination", destName)
+                                            })
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Error sending navigation error callback", e)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                override fun onError(errorCode: Int, errorString: String) {
+                    Log.e(TAG, "Navigation error - code: $errorCode, message: $errorString")
+                    
+                    // 发送错误回调到React Native
+                    currentActivity?.runOnUiThread {
+                        try {
+                            reactApplicationContext
+                                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                                .emit("NavigationCallbackError", WritableNativeMap().apply {
+                                    putString("callbackId", callbackId)
+                                    putInt("errorCode", errorCode)
+                                    putString("errorMessage", errorString ?: "Unknown error")
+                                    putString("destination", destName)
+                                })
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error sending navigation error callback", e)
+                        }
+                    }
+                }
+
+                override fun onStatusUpdate(status: Int, data: String) {
+                    Log.d(TAG, "Navigation status update - status: $status, data: $data")
+                    
+                    // 发送状态更新回调到React Native
+                    currentActivity?.runOnUiThread {
+                        try {
+                            reactApplicationContext
+                                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                                .emit("NavigationCallbackStatusUpdate", WritableNativeMap().apply {
+                                    putString("callbackId", callbackId)
+                                    putInt("status", status)
+                                    putString("data", data)
+                                    putString("destination", destName)
+                                })
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error sending navigation status callback", e)
+                        }
+                    }
+                }
+            })
+            
+            // 检查RobotApi调用是否立即失败
+            Log.d(TAG, "RobotApi.startNavigation call result: $callResult")
+            if (callResult != 0) {
+                Log.w(TAG, "RobotApi.startNavigation call failed with code: $callResult")
+                val errorResponse = WritableNativeMap()
+                errorResponse.putString("status", "error")
+                errorResponse.putString("message", "Navigation API call failed")
+                errorResponse.putString("destination", destName)
+                errorResponse.putString("description", "机器人导航服务异常，无法启动导航")
+                errorResponse.putInt("errorCode", callResult)
+                promise.resolve(errorResponse)
+                navigationCallbacks.remove(callbackId)
+                return
+            }
+            
+            // 导航启动成功
+            val successResponse = WritableNativeMap()
+            successResponse.putString("status", "success")
+            successResponse.putString("message", "Navigation started successfully")
+            successResponse.putString("destination", destName)
+            successResponse.putString("callbackId", callbackId)
+            promise.resolve(successResponse)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in startNavigationWithCallback method", e)
+            val errorResponse = WritableNativeMap()
+            errorResponse.putString("status", "error")
+            errorResponse.putString("message", "Failed to start navigation: ${e.message}")
+            errorResponse.putString("destination", destName)
+            errorResponse.putBoolean("navigationStarted", false)
+            errorResponse.putString("description", "启动导航时发生系统错误")
+            promise.resolve(errorResponse)
+        }
+        
+        Log.d(TAG, "=== AgentOSModule.startNavigationWithCallback() finished ===")
+    }
+
+    /**
+     * 发送导航事件到React Native
+     */
+    private fun sendNavigationEvent(eventName: String, data: WritableNativeMap) {
+        try {
+            reactApplicationContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit(eventName, data)
+            Log.d(TAG, "Navigation event sent: $eventName")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send navigation event: $eventName", e)
+        }
+    }
+    
+    /**
+     * 异步处理Action执行逻辑（当ActionExecutor超时时使用）
+     */
+    private suspend fun handleActionExecutionAsync(action: Action, params: Bundle?) {
+        Log.d(TAG, "=== handleActionExecutionAsync called ===")
+        Log.d(TAG, "Action: ${action.name}, sid: ${action.sid}")
+        
+        try {
+            // 发送事件到React Native，但不等待返回
+            currentActivity?.runOnUiThread {
+                handleActionExecution(action, params)
+            }
+            
+            // 等待一段时间让React Native处理
+            delay(3000)
+            
+            // 如果3秒后仍未收到回应，自动通知完成
+            if (actionInstances.containsKey(action.sid)) {
+                Log.w(TAG, "Async action handling timeout, auto-notifying completion for sid: ${action.sid}")
+                actionInstances.remove(action.sid)
+                try {
+                    action.notify()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error notifying action completion", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in handleActionExecutionAsync", e)
+            actionInstances.remove(action.sid)
+            try {
+                action.notify()
+            } catch (notifyError: Exception) {
+                Log.e(TAG, "Error notifying action after error", notifyError)
+            }
+        }
     }
 } 

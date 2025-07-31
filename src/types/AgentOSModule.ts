@@ -11,6 +11,58 @@ export interface AgentOSResponse {
   parametersCount?: number;
 }
 
+export interface RobotLocalizationResponse {
+  status: string;
+  message: string;
+  result?: number;
+  isLocalized: boolean;
+  description: string;
+}
+
+export interface PlaceDetail {
+  name: string;
+  x: number;
+  y: number;
+  theta: number;
+}
+
+export interface PlaceListResponse {
+  status: string;
+  message: string;
+  result?: number;
+  totalCount?: number;
+  filteredCount?: number;
+  placeNames: string[];
+  placeDetails: PlaceDetail[];
+}
+
+export interface NavigationResponse {
+  status: string;
+  message: string;
+  destination: string;
+  navigationStarted: boolean;
+  description: string;
+  errorCode?: number;
+  errorString?: string;
+  errorType?: string;
+  errorStatus?: number;
+}
+
+export interface NavigationStatusUpdate {
+  statusCode: number;
+  statusData: string;
+  destination: string;
+  statusType: string;
+  message: string;
+  description: string;
+}
+
+export interface NavigationCallback {
+  onSuccess: () => void;
+  onError: (errorCode: number, errorMessage: string) => void;
+  onStatusUpdate: (status: number, data: string) => void;
+}
+
 export interface ActionParameter {
   name: string;
   type: 'STRING' | 'ENUM';
@@ -120,6 +172,39 @@ export interface IAgentOSModule {
    * @param success 业务执行是否成功
    */
   notifyActionComplete(actionSid: string, success: boolean): Promise<AgentOSResponse>;
+
+  /**
+   * 检查机器人是否已定位
+   * @returns Promise<RobotLocalizationResponse> 定位状态检查结果
+   */
+  checkRobotLocalization(): Promise<RobotLocalizationResponse>;
+
+  /**
+   * 启动机器人定位（重定位）
+   * @returns Promise<AgentOSResponse> 启动定位的结果
+   */
+  startRobotReposition(): Promise<AgentOSResponse>;
+
+  /**
+   * 获取地图点位列表
+   * @returns Promise<PlaceListResponse> 点位列表数据
+   */
+  getPlaceList(): Promise<PlaceListResponse>;
+
+  /**
+   * 开始导航到指定地点
+   * @param destName 目标地点名称
+   * @returns Promise<NavigationResponse> 导航启动结果
+   */
+  startNavigation(destName: string): Promise<NavigationResponse>;
+
+  /**
+   * 开始导航到指定地点（带回调）
+   * @param destName 目标地点名称
+   * @param callback 导航回调函数
+   * @returns Promise<NavigationResponse> 导航启动结果
+   */
+  startNavigationWithCallback(destName: string, callback: NavigationCallback): Promise<NavigationResponse>;
 }
 
 export const AgentOSModule: IAgentOSModule = NativeModules.AgentOSModule; 

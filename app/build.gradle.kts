@@ -38,6 +38,9 @@ android {
 dependencies {
     implementation("com.orionstar.agent:sdk:0.3.5-SNAPSHOT") // 【重要配置】Agent SDK依赖
     
+    // Robot API JAR包依赖
+    implementation(files("libs/robotservice_11.3.jar")) // 【重要配置】Robot SDK依赖
+    
     // React Native依赖 - 使用更稳定的0.73版本
     implementation("com.facebook.react:react-android:0.73.9")
     implementation("com.facebook.react:hermes-android:0.73.9")

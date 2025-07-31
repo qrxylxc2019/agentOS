@@ -2,9 +2,14 @@ package com.example.rnagentosdemo
 
 import android.app.Application
 import android.os.Bundle
+import android.util.Log
 import com.ainirobot.agent.AppAgent
 import com.ainirobot.agent.action.Action
 import com.ainirobot.agent.action.Actions
+import com.ainirobot.coreservice.client.RobotApi
+import com.ainirobot.coreservice.client.ApiListener
+import com.ainirobot.coreservice.client.module.ModuleCallbackApi
+import android.os.RemoteException
 // import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
@@ -17,7 +22,12 @@ import com.facebook.soloader.SoLoader
 
 class MainApplication : Application(), ReactApplication {
 
+    companion object {
+        private const val TAG = "MainApplication"
+    }
+
     lateinit var appAgent: AppAgent
+    private var isRobotApiConnected = false
 
     override val reactNativeHost: ReactNativeHost =
         object : DefaultReactNativeHost(this) {
@@ -41,8 +51,13 @@ class MainApplication : Application(), ReactApplication {
     override fun onCreate() {
         super.onCreate()
 
+        Log.d(TAG, "MainApplication onCreate() started")
+
         // 初始化React Native
         SoLoader.init(this, false)
+
+        // ⚠️ 重要：必须在Application.onCreate()中初始化RobotSDK
+        initializeRobotSDK()
 
         // 初始化AgentOS
         appAgent = object : AppAgent(this@MainApplication) {
@@ -64,5 +79,79 @@ class MainApplication : Application(), ReactApplication {
                 return false
             }
         }
+
+        Log.d(TAG, "MainApplication onCreate() completed")
+    }
+
+    /**
+     * 初始化RobotSDK - 必须在Application.onCreate()中调用
+     */
+    private fun initializeRobotSDK() {
+        Log.d(TAG, "Initializing RobotSDK...")
+        
+        try {
+            // 创建模块回调接口
+            val moduleCallback = object : ModuleCallbackApi() {
+                @Throws(RemoteException::class)
+                override fun onSendRequest(reqId: Int, reqType: String?, reqText: String?, reqParam: String?): Boolean {
+                    // 这个回调已废弃
+                    Log.d(TAG, "ModuleCallback.onSendRequest (deprecated): reqId=$reqId, type=$reqType, text=$reqText")
+                    return true
+                }
+
+                @Throws(RemoteException::class)
+                override fun onRecovery() {
+                    // 控制权恢复，收到该事件后，重新恢复对机器人的控制
+                    Log.i(TAG, "Robot control recovered - ready to control robot")
+                    isRobotApiConnected = true
+                }
+
+                @Throws(RemoteException::class)
+                override fun onSuspend() {
+                    // 控制权被系统剥夺，收到该事件后，所有Api调用无效
+                    Log.w(TAG, "Robot control suspended - all API calls will be invalid")
+                    isRobotApiConnected = false
+                }
+            }
+
+            // 连接RobotAPI服务器
+            RobotApi.getInstance().connectServer(this, object : ApiListener {
+                override fun handleApiDisabled() {
+                    Log.w(TAG, "RobotAPI is disabled")
+                    isRobotApiConnected = false
+                }
+
+                override fun handleApiConnected() {
+                    Log.i(TAG, "RobotAPI connected successfully")
+                    isRobotApiConnected = true
+                    
+                    try {
+                        // 设置模块回调
+                        RobotApi.getInstance().setCallback(moduleCallback)
+                        Log.d(TAG, "RobotAPI module callback set successfully")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to set RobotAPI callback", e)
+                    }
+                }
+
+                override fun handleApiDisconnected() {
+                    Log.w(TAG, "RobotAPI disconnected")
+                    isRobotApiConnected = false
+                }
+            })
+
+            Log.d(TAG, "RobotSDK initialization request sent")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize RobotSDK", e)
+            isRobotApiConnected = false
+        }
+    }
+
+    /**
+     * 检查RobotAPI是否已连接
+     */
+    fun isRobotApiConnected(): Boolean {
+        return isRobotApiConnected
     }
 } 
