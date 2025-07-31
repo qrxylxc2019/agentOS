@@ -1,26 +1,19 @@
-import React, {useState, useEffect, useRef} from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   SafeAreaView,
   StyleSheet,
   Text,
   useColorScheme,
   View,
-  TextInput,
   TouchableOpacity,
-  FlatList,
-  Alert,
   NativeModules,
   DeviceEventEmitter,
   Image,
-  ImageBackground,
+  ScrollView,
 } from 'react-native';
-import {ChatMessage, AgentOSModule, ActionConfig, ActionExecutionData} from '../types';
+import { ChatMessage, AgentOSModule, ActionConfig, ActionExecutionData } from '../types';
 
 function ChatScreen(): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
-  const flatListRef = useRef<FlatList>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);  // 不再需要初始消息
-  const [inputText, setInputText] = useState('');
   const [isListening, setIsListening] = useState(false);
 
   useEffect(() => {
@@ -29,39 +22,39 @@ function ChatScreen(): React.JSX.Element {
     console.log('Available NativeModules:', Object.keys(NativeModules));
     console.log('AgentOSModule exists:', !!NativeModules.AgentOSModule);
     console.log('AgentOSModule methods:', NativeModules.AgentOSModule ? Object.keys(NativeModules.AgentOSModule) : 'undefined');
-    
+
     // 初始化PageAgent
     const initializePageAgent = async () => {
       try {
         if (NativeModules.AgentOSModule) {
           const pageId = 'ChatScreen';
-          
+
           // 1. 清理AgentOS上下文
           await NativeModules.AgentOSModule.clearContext();
           console.log('AgentOS context cleared');
-          
+
           // 2. 创建PageAgent
           const createResult = await NativeModules.AgentOSModule.createPageAgent(pageId);
           console.log('PageAgent created:', createResult);
-          
+
           // 3. 设置角色人设
           const personaResult = await NativeModules.AgentOSModule.setPersona(
-            pageId, 
+            pageId,
             '你是猎户风景区的智能导游助手，熟悉景区的各种设施、门票价格、参观路线和景点介绍。你热情友好，能够为游客提供专业的咨询服务和引导。'
           );
           console.log('Persona set:', personaResult);
-          
+
           // 4. 设置任务目标
           const objectiveResult = await NativeModules.AgentOSModule.setObjective(
-            pageId, 
+            pageId,
             '为游客提供景区信息咨询，包括门票购买、景点介绍、游览路线推荐、设施位置等，提升游客的参观体验。'
           );
           console.log('Objective set:', objectiveResult);
-          
+
           // 5. 注册Actions（注册SAY Action用于语音回复）
           const actionResult = await NativeModules.AgentOSModule.registerAction(pageId, 'orion.agent.action.SAY');
           console.log('Action registered:', actionResult);
-          
+
           // 6. 注册复杂Action - "引领"功能
           const leadingActionConfig: ActionConfig = {
             name: 'com.agent.demo.leading',
@@ -76,14 +69,14 @@ function ChatScreen(): React.JSX.Element {
               }
             ]
           };
-          
+
           const leadingResult = await NativeModules.AgentOSModule.registerComplexAction(pageId, leadingActionConfig);
           console.log('Leading action registered:', leadingResult);
-          
+
           // 7. 开始PageAgent（所有Action注册完毕后）
           const beginResult = await NativeModules.AgentOSModule.beginPageAgent(pageId);
           console.log('PageAgent began:', beginResult);
-          
+
           // 8. 上传页面信息
           const interfaceInfo = `当前页面是社保小助手聊天界面，包含：
           - 消息列表：显示社保咨询对话记录
@@ -100,12 +93,12 @@ function ChatScreen(): React.JSX.Element {
           - 社保卡办理和使用
           - 社保转移接续
           - 退休手续办理等`;
-          
+
           await NativeModules.AgentOSModule.uploadInterfaceInfo(interfaceInfo);
           console.log('Interface info uploaded');
-          
+
           console.log('PageAgent initialization completed successfully');
-          
+
         } else {
           console.error('AgentOSModule not found in NativeModules');
         }
@@ -155,89 +148,41 @@ function ChatScreen(): React.JSX.Element {
   const handleActionExecution = async (data: ActionExecutionData) => {
     console.log('=== handleActionExecution called ===');
     console.log('Action data:', data);
-    
+
     let executionSuccess = false;
-    
+
     try {
-      const { actionName, displayName, userQuery, parameters, sid } = data;
-      
+      const { actionName, userQuery, parameters, sid } = data;
+
       if (actionName === 'com.agent.demo.leading') {
         // 处理引领Action
         const location = parameters.location || '未知地点';
-        
+
         // 1. 显示Action触发信息
-        const actionTriggeredMessage = `🎯 检测到引领请求！
-        
-📍 目标地点：${location}
-🗨️ 用户问题：${userQuery}
-🆔 Action ID：${sid}
+        console.log(`🎯 检测到引领请求！目标地点：${location}，用户问题：${userQuery}，Action ID：${sid}`);
 
-🔄 正在启动引领服务...`;
-
-        // addMessage(actionTriggeredMessage, false); // 移除 addMessage
-        
         console.log(`开始引领用户前往：${location}`);
-        
+
         // 2. 模拟具体的引领场景并显示结果
         if (location.includes('茶水间')) {
           console.log(`导航成功：开始引领前往茶水间`);
           executionSuccess = true;
-          
-          const successMessage = `✅ 引领执行成功！
-          
-🚀 正在为您带路前往茶水间
-📍 当前位置：大厅
-🗺️ 规划路径：
-   大厅 → 走廊 → 茶水间
-⏱️ 预计到达：2分钟
-🚶‍♂️ 请跟随我的指引前进！
 
-💧 茶水间设施：
-• 饮水机、热水器
-• 茶叶、咖啡包
-• 微波炉、冰箱`;
-          
-          // addMessage(successMessage, false); // 移除 addMessage
-          
         } else if (location.includes('咖啡厅')) {
           console.log(`导航失败：咖啡厅暂时关闭`);
           executionSuccess = false;
-          
-          const failureMessage = `❌ 引领执行失败！
-          
-🚫 很抱歉，咖啡厅今日暂时关闭
-🔧 关闭原因：设备维护中
-⏰ 预计恢复：明天上午9:00
 
-🔄 建议替代地点：
-• 🍵 茶水间（2楼走廊）
-• 🍽️ 员工餐厅（1楼大厅）
-• 🏪 便利店（楼下1楼）
-
-💡 可以说"带我去茶水间"试试成功场景～`;
-          
-          // addMessage(failureMessage, false); // 移除 addMessage
-          
         } else {
           console.log(`导航成功：开始引领前往 ${location}`);
           executionSuccess = true;
-          
-          const defaultSuccessMessage = `✅ 引领执行成功！
-          
-🚀 正在为您带路前往"${location}"
-🗺️ 正在规划最佳路径...
-🚶‍♂️ 请跟随我的指引前进
-❓ 如需帮助请随时告诉我`;
-          
-          // addMessage(defaultSuccessMessage, false); // 移除 addMessage
         }
-        
+
       } else {
         // 处理其他Action
         // addMessage(`✅ 执行了Action: ${displayName}\n用户问题: ${userQuery}\n参数: ${JSON.stringify(parameters)}\nAction ID: ${sid}`, false); // 移除 addMessage
         executionSuccess = true;
       }
-      
+
       // 1. 首先告诉ActionExecutor我们要处理这个Action
       try {
         const executorResponse = await AgentOSModule.respondToActionExecution(sid, true); // true表示我们处理
@@ -250,35 +195,21 @@ function ChatScreen(): React.JSX.Element {
       try {
         const notifyResponse = await AgentOSModule.notifyActionComplete(sid, executionSuccess);
         console.log('Action notify response sent:', notifyResponse);
-        
+
         if (executionSuccess) {
-          // addMessage(`🔔 系统通知：引领任务执行成功
-          // 
-          // ✅ 已向AgentOS系统报告任务完成
-          // 🎯 Action状态：SUCCEEDED
-          // 📋 任务ID：${sid}
-          // ⚡ AgentOS将根据成功状态进行后续处理`, false); // 移除 addMessage
+          console.log(`🔔 系统通知：引领任务执行成功，任务ID：${sid}`);
         } else {
-          // addMessage(`🔔 系统通知：引领任务执行失败
-          // 
-          // ❌ 已向AgentOS系统报告任务失败
-          // 🎯 Action状态：FAILED  
-          // 📋 任务ID：${sid}
-          // ⚡ AgentOS将根据失败状态进行后续处理`, false); // 移除 addMessage
+          console.log(`🔔 系统通知：引领任务执行失败，任务ID：${sid}`);
         }
       } catch (notifyError) {
         console.error('Failed to notify action completion:', notifyError);
-        // addMessage(`⚠️ 系统通知失败
-        // 
-        // 🚫 无法向AgentOS系统报告执行状态
-        // �� 错误信息：${notifyError}
-        // 📞 请联系技术支持`, false); // 移除 addMessage
+        console.log(`⚠️ 系统通知失败：${notifyError}`);
       }
-      
+
     } catch (error) {
       console.error('Error handling action execution:', error);
-      // addMessage('❌ 处理Action执行时发生错误', false); // 移除 addMessage
-      
+      console.log('❌ 处理Action执行时发生错误');
+
       // 即使处理出错，也要向原生层报告
       try {
         if (data.sid) {
@@ -324,19 +255,19 @@ function ChatScreen(): React.JSX.Element {
         - 中央图片：风景区图片
         - 语音提示：你还可以问我
         - 快捷问题按钮：如何进入后台、如何配置首页、优秀首页示例`;
-        
+
         await AgentOSModule.uploadInterfaceInfo(interfaceInfo);
         console.log('Interface info uploaded successfully');
-        
+
         // 提示用户语音功能已激活
         console.log('语音功能已激活，请开始说话...');
-        
+
         // 2秒后关闭语音监听状态
         setTimeout(() => {
           setIsListening(false);
           console.log('语音识别已结束');
         }, 2000);
-        
+
       } catch (error) {
         console.error('Voice activation error:', error);
         setIsListening(false);
@@ -348,57 +279,108 @@ function ChatScreen(): React.JSX.Element {
   // 移除原来的renderMessage函数，因为我们不再使用FlatList显示消息
 
   return (
-    <SafeAreaView style={[styles.container, backgroundStyle]}>      
-      {/* 标题栏 */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>
-          猎户风景区欢迎你
-        </Text>
-      </View>
+    <SafeAreaView style={[styles.container, backgroundStyle]}>
+      {/* 两列布局容器 */}
+      <View style={styles.mainContainer}>
+        {/* 左侧列 */}
+        <View style={styles.leftColumn}>
+          {/* 标题栏 */}
+          <View style={styles.header}>
+            <Text style={styles.headerTitle}>
+              猎户风景区欢迎你
+            </Text>
+          </View>
 
-      {/* 中间图片区域 */}
-      <View style={styles.imageContainer}>
-        <Image 
-          source={require('../assets/img/demo.png')} 
-          style={styles.centerImage} 
-          resizeMode="contain"
-        />
-        <View style={styles.speechBubble}>
-          <Text style={styles.speechText}>"我要买门票"</Text>
+          {/* 中间图片区域 */}
+          <View style={styles.imageContainer}>
+            <Image
+              source={require('../assets/img/demo.png')}
+              style={styles.centerImage}
+              resizeMode="contain"
+            />
+            <View style={styles.speechBubble}>
+              <Text style={styles.speechText}>"我要买门票"</Text>
+            </View>
+          </View>
         </View>
-      </View>
 
-      {/* 语音提示区域 */}
-      <View style={styles.voiceHintContainer}>
-        <TouchableOpacity 
-          style={styles.micIconContainer}
-          onPress={handleVoice}
-        >
-          <Text style={styles.micIcon}>🎤</Text>
-        </TouchableOpacity>
-        <Text style={styles.voiceHintText}>你还可以问我</Text>
-      </View>
+        {/* 右侧列 */}
+        <View style={styles.rightColumn}>
+          {/* 语音提示区域 */}
+          <View style={styles.voiceHintContainer}>
+            <TouchableOpacity
+              style={styles.micIconContainer}
+              onPress={handleVoice}
+            >
+              <Text style={styles.micIcon}>🎤</Text>
+            </TouchableOpacity>
+            <Text style={styles.voiceHintText}>你还可以问我</Text>
+          </View>
 
-      {/* 快捷问题按钮区域 */}
-      <View style={styles.quickButtonsContainer}>
-        <TouchableOpacity 
-          style={styles.quickButton}
-          onPress={() => handleQuickButton('如何进入后台')}
-        >
-          <Text style={styles.quickButtonText}>如何进入后台</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={styles.quickButton}
-          onPress={() => handleQuickButton('如何配置首页')}
-        >
-          <Text style={styles.quickButtonText}>如何配置首页</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={styles.quickButton}
-          onPress={() => handleQuickButton('优秀首页示例')}
-        >
-          <Text style={styles.quickButtonText}>优秀首页示例</Text>
-        </TouchableOpacity>
+          {/* 快捷问题按钮区域 - 垂直滚动 */}
+          <ScrollView style={styles.quickButtonsContainer} showsVerticalScrollIndicator={false}>
+            <TouchableOpacity
+              style={styles.quickButton}
+              onPress={() => handleQuickButton('如何进入后台')}
+            >
+              <Text style={styles.quickButtonText}>如何进入后台</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.quickButton}
+              onPress={() => handleQuickButton('如何配置首页')}
+            >
+              <Text style={styles.quickButtonText}>如何配置首页</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.quickButton}
+              onPress={() => handleQuickButton('优秀首页示例')}
+            >
+              <Text style={styles.quickButtonText}>优秀首页示例</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.quickButton}
+              onPress={() => handleQuickButton('门票价格查询')}
+            >
+              <Text style={styles.quickButtonText}>门票价格查询</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.quickButton}
+              onPress={() => handleQuickButton('景点介绍')}
+            >
+              <Text style={styles.quickButtonText}>景点介绍</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.quickButton}
+              onPress={() => handleQuickButton('游览路线推荐')}
+            >
+              <Text style={styles.quickButtonText}>游览路线推荐</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.quickButton}
+              onPress={() => handleQuickButton('交通指南')}
+            >
+              <Text style={styles.quickButtonText}>交通指南</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.quickButton}
+              onPress={() => handleQuickButton('开放时间')}
+            >
+              <Text style={styles.quickButtonText}>开放时间</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.quickButton}
+              onPress={() => handleQuickButton('餐饮服务')}
+            >
+              <Text style={styles.quickButtonText}>餐饮服务</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.quickButton}
+              onPress={() => handleQuickButton('住宿推荐')}
+            >
+              <Text style={styles.quickButtonText}>住宿推荐</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -407,6 +389,19 @@ function ChatScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  mainContainer: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  leftColumn: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  rightColumn: {
+    flex: 1,
+    paddingLeft: 10,
+    paddingTop: 20,
   },
   header: {
     padding: 16,
@@ -423,35 +418,35 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
+    paddingHorizontal: 10,
   },
   centerImage: {
-    width: '90%',
-    height: '70%',
+    width: '100%',
+    height: '80%',
     borderRadius: 10,
   },
   speechBubble: {
     position: 'absolute',
-    top: '20%',
-    right: '25%',
+    top: '15%',
+    right: '10%',
     backgroundColor: 'white',
     borderRadius: 20,
-    padding: 15,
-    maxWidth: '40%',
-    transform: [{rotate: '-5deg'}],
+    padding: 12,
+    maxWidth: '50%',
+    transform: [{ rotate: '-5deg' }],
   },
   speechText: {
     color: '#5B6FB1',
     fontWeight: 'bold',
-    fontSize: 18,
+    fontSize: 16,
     textAlign: 'center',
   },
   voiceHintContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    marginBottom: 10,
-    paddingRight: 30,
-    marginTop: 10,
+    justifyContent: 'center',
+    marginBottom: 20,
+    paddingHorizontal: 10,
   },
   micIconContainer: {
     backgroundColor: '#4CAF50',
@@ -472,20 +467,21 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   quickButtonsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: 20,
-    marginBottom: 30,
+    flex: 1,
+    paddingHorizontal: 10,
   },
   quickButton: {
     backgroundColor: '#8E6BFF',
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    borderRadius: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 25,
+    marginBottom: 15,
+    alignItems: 'center',
   },
   quickButtonText: {
     color: 'white',
     fontWeight: 'bold',
+    fontSize: 16,
   },
 });
 
