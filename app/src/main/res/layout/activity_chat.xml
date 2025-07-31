@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F5F5F5"
+    android:padding="16dp">
+
+    <!-- 标题栏 -->
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="智能助手聊天"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="#333333"
+        android:gravity="center"
+        android:padding="8dp"
+        android:background="#FFFFFF"
+        android:layout_marginBottom="8dp" />
+
+    <!-- 聊天消息列表 -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvChatMessages"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#FFFFFF"
+        android:padding="8dp"
+        android:clipToPadding="false" />
+
+    <!-- 功能按钮区域 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="8dp"
+        android:gravity="center">
+
+                 <!-- React Native 按钮 -->
+         <Button
+             android:id="@+id/btnReactNative"
+             android:layout_width="0dp"
+             android:layout_height="wrap_content"
+             android:layout_weight="1"
+             android:text="🔄 返回RN"
+             android:textSize="14sp"
+             android:background="#FF6B35"
+             android:textColor="#FFFFFF"
+             android:layout_marginEnd="4dp"
+             android:padding="8dp" />
+
+        <!-- 功能展示按钮 -->
+        <Button
+            android:id="@+id/btnFeatures"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="✨ 混合开发"
+            android:textSize="14sp"
+            android:background="#9C27B0"
+            android:textColor="#FFFFFF"
+            android:layout_marginStart="4dp"
+            android:padding="8dp" />
+
+    </LinearLayout>
+
+    <!-- 底部控制区域 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp"
+        android:padding="8dp"
+        android:background="#FFFFFF"
+        android:gravity="center_vertical">
+
+        <!-- 语音按钮 -->
+        <Button
+            android:id="@+id/btnVoice"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:text="语音"
+            android:textSize="14sp"
+            android:background="#4CAF50"
+            android:textColor="#FFFFFF"
+            android:layout_marginEnd="8dp" />
+
+        <!-- 输入框 -->
+        <EditText
+            android:id="@+id/etInput"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:hint="输入消息..."
+            android:textSize="14sp"
+            android:padding="8dp"
+            android:background="#F0F0F0"
+            android:layout_marginEnd="8dp" />
+
+        <!-- 发送按钮 -->
+        <Button
+            android:id="@+id/btnSend"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:text="发送"
+            android:textSize="14sp"
+            android:background="#2196F3"
+            android:textColor="#FFFFFF" />
+
+    </LinearLayout>
+
+</LinearLayout> 
