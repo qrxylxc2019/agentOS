@@ -307,7 +307,7 @@ function ChatScreen(): React.JSX.Element {
           <View style={styles.voiceHintContainer}>
             <View style={styles.micIconContainer}>
               <Image
-                source={require('../assets/img/demo.gif')}
+                source={require('../assets/img/mic.png')}
                 style={styles.micIcon}
                 resizeMode="contain"
               />
