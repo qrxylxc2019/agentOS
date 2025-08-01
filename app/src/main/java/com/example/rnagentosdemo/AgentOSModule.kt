@@ -98,6 +98,23 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     override fun getName(): String {
         return "AgentOSModule"
     }
+    
+    init {
+        // 在初始化时注册社保问答Action
+        registerSocialInsuranceAction()
+    }
+    
+    /**
+     * 注册社保咨询Action
+     */
+    private fun registerSocialInsuranceAction() {
+        try {
+            val mainApplication = reactApplicationContext.applicationContext as MainApplication
+            // 社保咨询Action已在MainApplication中注册，这里不需要重复注册
+        } catch (e: Exception) {
+            Log.e(TAG, "注册社保咨询Action失败", e)
+        }
+    }
 
     @ReactMethod
     fun query(text: String, promise: Promise) {
@@ -761,6 +778,10 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             
             // 注册Action到PageAgent
             pageAgent.registerAction(action)
+
+
+
+            
             
             Log.d(TAG, "Complex action '$actionName' registered successfully for PageAgent: '$pageId'")
             

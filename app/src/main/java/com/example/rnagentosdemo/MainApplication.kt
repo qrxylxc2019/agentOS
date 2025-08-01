@@ -5,7 +5,10 @@ import android.os.Bundle
 import android.util.Log
 import com.ainirobot.agent.AppAgent
 import com.ainirobot.agent.action.Action
+import com.ainirobot.agent.action.ActionExecutor
 import com.ainirobot.agent.action.Actions
+import com.ainirobot.agent.base.Parameter
+import com.ainirobot.agent.base.ParameterType
 import com.ainirobot.coreservice.client.RobotApi
 import com.ainirobot.coreservice.client.ApiListener
 import com.ainirobot.coreservice.client.module.ModuleCallbackApi
@@ -69,6 +72,32 @@ class MainApplication : Application(), ReactApplication {
                 
                 // 注册系统Actions
                 registerAction(Actions.SAY)
+                
+                Log.d("zixun", "注册社保咨询Action")
+                // 注册社保问答Action
+                val socialInsuranceAction = Action(
+                    "orion.agent.action.SOCIAL_INSURANCE",
+                    "社保咨询",
+                    "你是一个专业的社保小助手，熟悉各类社会保险政策和办理流程。你耐心细致，能够用通俗易懂的语言为用户解释复杂的社保问题，帮助用户快速理解各种手续的办理要求。用户想要咨询社保相关知识",
+                    parameters = listOf(
+                        Parameter(
+                            "question",
+                            ParameterType.STRING,
+                            "社保相关问题",
+                            false
+                        )
+                    ),
+                    executor = object : ActionExecutor {
+                        override fun onExecute(action: Action, params: Bundle?): Boolean {
+                            // 处理社保咨询逻辑
+                            Log.d("zixun", "收到社保咨询问题: ")
+                            // 获取参数
+                            val question = params?.getString("question") ?: "社保相关问题"
+                            return false
+                        }
+                    }
+                )
+                registerAction(socialInsuranceAction)
             }
 
             override fun onExecuteAction(

@@ -1,5 +1,19 @@
 {
   "appId": "app_ebbd1e6e22d6499eb9c220daf095d465",
   "platform": "apk",
-  "actionList": []
+  "actionList": [
+    {
+      "name": "orion.agent.action.SOCIAL_INSURANCE",
+      "displayName": "社保咨询",
+      "desc": "用户想要咨询社保相关知识",
+      "parameters": [
+        {
+          "name": "question",
+          "type": "STRING",
+          "desc": "社保相关问题",
+          "required": false
+        }
+      ]
+    }
+  ]
 } 
