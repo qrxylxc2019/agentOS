@@ -87,6 +87,15 @@ export interface ActionExecutionData {
   parameters: { [key: string]: any };
 }
 
+export interface PersonDetectionEvent {
+  count: number;
+}
+
+export interface FaceFollowingStatusEvent {
+  isFollowing: boolean;
+  personId?: string;
+}
+
 export interface IAgentOSModule {
   /**
    * 通过文本形式的用户问题触发大模型规划Action
@@ -104,6 +113,21 @@ export interface IAgentOSModule {
    * 清空大模型对话上下文记录
    */
   clearContext(): Promise<AgentOSResponse>;
+  
+  /**
+   * 注册人脸识别监听器
+   */
+  registerPersonListener(): Promise<{success: boolean, message: string}>;
+  
+  /**
+   * 注销人脸识别监听器
+   */
+  unregisterPersonListener(): Promise<{success: boolean, message: string}>;
+  
+  /**
+   * 停止人脸跟随
+   */
+  stopFaceFollowing(): Promise<{success: boolean, message: string}>;
 
   // =============== PageAgent 相关方法 ===============
 

@@ -80,6 +80,7 @@ class MainApplication : Application(), ReactApplication {
             }
         }
 
+
         Log.d(TAG, "MainApplication onCreate() completed")
     }
 
@@ -129,6 +130,8 @@ class MainApplication : Application(), ReactApplication {
                         // 设置模块回调
                         RobotApi.getInstance().setCallback(moduleCallback)
                         Log.d(TAG, "RobotAPI module callback set successfully")
+                        
+                        
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to set RobotAPI callback", e)
                     }
@@ -153,5 +156,9 @@ class MainApplication : Application(), ReactApplication {
      */
     fun isRobotApiConnected(): Boolean {
         return isRobotApiConnected
+    }
+    
+    override fun onTerminate() {
+        super.onTerminate()
     }
 } 

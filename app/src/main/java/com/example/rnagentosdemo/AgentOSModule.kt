@@ -26,6 +26,10 @@ import com.ainirobot.coreservice.client.listener.CommandListener
 import com.ainirobot.coreservice.client.listener.ActionListener
 import com.ainirobot.coreservice.client.RobotApi
 import com.ainirobot.coreservice.client.Definition
+import com.ainirobot.coreservice.client.person.PersonApi
+import com.ainirobot.coreservice.client.person.PersonListener
+import com.ainirobot.coreservice.client.listener.Person
+import com.ainirobot.coreservice.client.person.PersonUtils;
 import android.content.Intent
 import org.json.JSONArray
 import org.json.JSONException
@@ -45,6 +49,51 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     
     // 存储导航回调，以callbackId为key
     private val navigationCallbacks = mutableMapOf<String, Promise>()
+    
+    // 人脸识别相关
+    private val mMaxDistance = 1.5 // 最大识别距离，使用Double类型
+    private var personList: List<Person>? = null
+    
+    // 人脸跟随相关常量
+    private val DEFAULT_PERSON_LOST_TIMEOUT = 10L // 多久识别不到目标上报目标丢失状态，单位秒
+    private val DEFAULT_PERSON_LOST_DISTANCE = 1.5f // 目标距离多远上报超距状态，单位米
+    private val isAllowMoveBody = true // 是否允许机器人移动身体进行跟随
+    
+    // 标记是否正在进行人脸跟随
+    private var isFaceFollowing = false
+    
+    // 人脸识别监听器
+    private val mPersonListener = object : PersonListener() {
+        override fun personChanged() {
+            try {
+                // 如果正在进行人脸跟随，则不处理人脸检测
+                if (isFaceFollowing) {
+                    return
+                }
+                
+                personList = PersonApi.getInstance().getCompleteFaceList(mMaxDistance)
+                val count = personList?.size ?: 0
+                if(count > 0){
+                    Log.d(TAG, "检测到人脸数量: $count")
+
+                    // 打印每个检测到的人脸信息
+                    personList?.forEachIndexed { index, person ->
+                        Log.d(TAG, "有人脸[$index] ")
+                    }
+                    // 发送事件到React Native
+                    sendPersonDetectionEvent(count)
+                    
+                    // 获取最佳人脸并开始人脸跟随
+                    val bestPerson = PersonUtils.getBestFace(personList, mMaxDistance, 60.0)
+                    if (bestPerson != null) {
+                        startFaceFollowing(bestPerson)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "获取人脸列表失败", e)
+            }
+        }
+    }
 
     override fun getName(): String {
         return "AgentOSModule"
@@ -85,6 +134,211 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         Log.d(TAG, "=== AgentOSModule.query() finished ===")
     }
 
+    /**
+     * 发送人脸检测事件到React Native
+     */
+    private fun sendPersonDetectionEvent(count: Int) {
+        val params = WritableNativeMap().apply {
+            putInt("count", count)
+        }
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("onPersonDetected", params)
+    }
+    
+    /**
+     * 开始人脸跟随
+     */
+    private fun startFaceFollowing(bestPerson: Person) {
+        if (isFaceFollowing) {
+            Log.d(TAG, "已经在进行人脸跟随，忽略此次请求")
+            return
+        }
+        
+        val personId = bestPerson.id
+        Log.d(TAG, "开始人脸跟随，人脸ID: $personId")
+        
+        // 标记为正在进行人脸跟随，这会暂停人脸检测逻辑
+        isFaceFollowing = true
+        
+        // 开始人脸跟随
+        val reqId = 0 // 请求ID，可以是任意值
+        RobotApi.getInstance().startFocusFollow(
+            reqId, 
+            personId, 
+            DEFAULT_PERSON_LOST_TIMEOUT,
+            DEFAULT_PERSON_LOST_DISTANCE, 
+            isAllowMoveBody, 
+            object : ActionListener() {
+                override fun onStatusUpdate(status: Int, data: String) {
+                    Log.d(TAG, "人脸跟随状态更新 - status: $status, data: $data")
+                    
+                    when (status) {
+                        Definition.STATUS_TRACK_TARGET_SUCCEED -> {
+                            // 跟随目标成功
+                            Log.d(TAG, "人脸跟随目标成功")
+                        }
+                        Definition.STATUS_GUEST_LOST -> {
+                            // 跟随目标丢失
+                            Log.d(TAG, "人脸跟随目标丢失")
+                            stopFaceFollowing()
+                        }
+                        Definition.STATUS_GUEST_FARAWAY -> {
+                            // 跟随目标距离已大于设置的最大距离
+                            Log.d(TAG, "人脸跟随目标距离过远")
+                        }
+                        Definition.STATUS_GUEST_APPEAR -> {
+                            // 跟随目标重新进入设置的最大距离内
+                            Log.d(TAG, "人脸跟随目标重新进入范围")
+                        }
+                    }
+                }
+
+                override fun onError(errorCode: Int, errorString: String) {
+                    Log.e(TAG, "人脸跟随错误 - errorCode: $errorCode, errorString: $errorString")
+                    
+                    when (errorCode) {
+                        Definition.ERROR_SET_TRACK_FAILED, Definition.ERROR_TARGET_NOT_FOUND -> {
+                            // 跟随目标未找到
+                            Log.e(TAG, "人脸跟随目标未找到")
+                            stopFaceFollowing()
+                        }
+                        Definition.ACTION_RESPONSE_ALREADY_RUN -> {
+                            // 正在跟随中，请先停止上次跟随，才能重新执行
+                            Log.e(TAG, "已有人脸跟随正在进行")
+                        }
+                        Definition.ACTION_RESPONSE_REQUEST_RES_ERROR -> {
+                            // 已经有需要控制底盘的接口调用(例如：引领、导航)，请先停止，才能继续调用
+                            Log.e(TAG, "底盘资源被占用，无法进行人脸跟随")
+                            stopFaceFollowing()
+                        }
+                    }
+                }
+
+                override fun onResult(status: Int, responseString: String) {
+                    Log.d(TAG, "人脸跟随结果 - status: $status, responseString: $responseString")
+                    
+                    if (status == Definition.ACTION_RESPONSE_STOP_SUCCESS) {
+                        // 在焦点跟随过程中，主动调用stopFocusFollow，成功停止跟随
+                        Log.d(TAG, "人脸跟随已成功停止")
+                        stopFaceFollowing()
+                    }
+                }
+            }
+        )
+        
+        // 发送人脸跟随状态变更事件到React Native
+        sendFaceFollowingStatusEvent(true, personId.toString())
+    }
+    
+    /**
+     * 停止人脸跟随
+     */
+    private fun stopFaceFollowing() {
+        if (!isFaceFollowing) {
+            return
+        }
+        
+        Log.d(TAG, "停止人脸跟随")
+        
+        // 停止人脸跟随
+        val reqId = 0 // 请求ID，可以是任意值
+        RobotApi.getInstance().stopFocusFollow(reqId)
+        
+        // 重置状态
+        isFaceFollowing = false
+        
+        // 发送人脸跟随状态变更事件到React Native
+        sendFaceFollowingStatusEvent(false, null)
+    }
+    
+    /**
+     * 发送人脸跟随状态事件到React Native
+     */
+    private fun sendFaceFollowingStatusEvent(isFollowing: Boolean, personId: String?) {
+        val params = WritableNativeMap().apply {
+            putBoolean("isFollowing", isFollowing)
+            personId?.let { putString("personId", it) }
+        }
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("onFaceFollowingStatusChanged", params)
+    }
+    
+    /**
+     * 注册人脸识别监听器
+     */
+    @ReactMethod
+    fun registerPersonListener(promise: Promise) {
+        try {
+            Log.d(TAG, "正在注册人脸识别监听器...")
+            val result = PersonApi.getInstance().registerPersonListener(mPersonListener)
+            if (result == true) {
+                Log.d(TAG, "人脸识别监听器注册成功")
+                val response = WritableNativeMap().apply {
+                    putBoolean("success", true)
+                    putString("message", "人脸识别监听器注册成功")
+                }
+                promise.resolve(response)
+            } else {
+                Log.e(TAG, "人脸识别监听器注册失败，错误码: $result")
+                promise.reject("REGISTER_ERROR", "人脸识别监听器注册失败，错误码: $result")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "注册人脸识别监听器时发生异常", e)
+            promise.reject("REGISTER_EXCEPTION", "注册人脸识别监听器时发生异常: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * 注销人脸识别监听器
+     */
+    @ReactMethod
+    fun unregisterPersonListener(promise: Promise) {
+        try {
+            Log.d(TAG, "正在注销人脸识别监听器...")
+            val result = PersonApi.getInstance().unregisterPersonListener(mPersonListener)
+            Log.d(TAG, "人脸识别监听器注销${result}")
+            
+            val response = WritableNativeMap().apply {
+                putString("message", "人脸识别监听器注销${ result}")
+            }
+            promise.resolve(response)
+        } catch (e: Exception) {
+            Log.e(TAG, "注销人脸识别监听器时发生异常", e)
+            promise.reject("UNREGISTER_EXCEPTION", "注销人脸识别监听器时发生异常: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * 手动停止人脸跟随
+     */
+    @ReactMethod
+    fun stopFaceFollowing(promise: Promise) {
+        try {
+            if (!isFaceFollowing) {
+                val response = WritableNativeMap().apply {
+                    putBoolean("success", true)
+                    putString("message", "当前没有进行人脸跟随")
+                }
+                promise.resolve(response)
+                return
+            }
+            
+            Log.d(TAG, "手动停止人脸跟随")
+            stopFaceFollowing()
+            
+            val response = WritableNativeMap().apply {
+                putBoolean("success", true)
+                putString("message", "人脸跟随已停止")
+            }
+            promise.resolve(response)
+        } catch (e: Exception) {
+            Log.e(TAG, "停止人脸跟随时发生异常", e)
+            promise.reject("STOP_FACE_FOLLOWING_EXCEPTION", "停止人脸跟随时发生异常: ${e.message}", e)
+        }
+    }
+    
     @ReactMethod
     fun uploadInterfaceInfo(interfaceInfo: String, promise: Promise) {
         Log.d(TAG, "=== AgentOSModule.uploadInterfaceInfo() called ===")

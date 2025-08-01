@@ -13,7 +13,7 @@ import {
   Image,
   ScrollView,
 } from 'react-native';
-import { ChatMessage, AgentOSModule, ActionConfig, ActionExecutionData, RobotLocalizationResponse, PlaceListResponse, NavigationResponse, NavigationStatusUpdate, NavigationCallback } from '../types';
+import { ChatMessage, AgentOSModule, ActionConfig, ActionExecutionData, RobotLocalizationResponse, PlaceListResponse, NavigationResponse, NavigationStatusUpdate, NavigationCallback, PersonDetectionEvent, FaceFollowingStatusEvent } from '../types';
 
 function ChatScreen(): React.JSX.Element {
   const isDarkMode = useColorScheme() === 'dark';
@@ -29,17 +29,55 @@ function ChatScreen(): React.JSX.Element {
   const [inputText, setInputText] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [availablePlaces, setAvailablePlaces] = useState<string[]>([]);
+  const [isFaceFollowing, setIsFaceFollowing] = useState(false);
+  const [followingPersonId, setFollowingPersonId] = useState<string | null>(null);
   const currentNavigationActionSid = useRef<string | null>(null);
   const navigationCallbacks = useRef<Map<string, NavigationCallback>>(new Map());
 
   useEffect(() => {
+    // 注册人脸识别监听器
+    AgentOSModule.registerPersonListener()
+      .then(result => {
+        console.log('人脸识别监听器注册结果:', result);
+      })
+      .catch(error => {
+        console.error('人脸识别监听器注册失败:', error);
+      });
+    
+    // 监听人脸检测事件
+    const personDetectionSubscription = DeviceEventEmitter.addListener(
+      'onPersonDetected',
+      (event: PersonDetectionEvent) => {
+        console.log('rn检测到人脸数量:', event.count);
+        if (event.count > 0) {
+          // 当检测到人脸时，可以在这里添加相应的处理逻辑
+          // 例如：自动问候、记录人脸出现次数等
+        }
+      }
+    );
+    
+    // 监听人脸跟随状态变化事件
+    const faceFollowingStatusSubscription = DeviceEventEmitter.addListener(
+      'onFaceFollowingStatusChanged',
+      (event: FaceFollowingStatusEvent) => {
+        console.log('人脸跟随状态变化:', event);
+        setIsFaceFollowing(event.isFollowing);
+        setFollowingPersonId(event.personId || null);
+        
+        // 当人脸跟随开始或结束时，可以在这里添加相应的处理逻辑
+        if (event.isFollowing) {
+          addMessage(`开始跟随人脸 ID: ${event.personId}`, false);
+        } else {
+          addMessage('停止人脸跟随', false);
+        }
+      }
+    );
+    
     // 测试原生模块是否可用
     console.log('=== ChatScreen useEffect ===');
     console.log('Available NativeModules:', Object.keys(NativeModules));
     console.log('AgentOSModule exists:', !!NativeModules.AgentOSModule);
     console.log('AgentOSModule methods:', NativeModules.AgentOSModule ? Object.keys(NativeModules.AgentOSModule) : 'undefined');
-
-    // 初始化PageAgent
     const initializePageAgent = async () => {
       try {
         if (NativeModules.AgentOSModule) {
@@ -279,8 +317,20 @@ ${placeListResult.placeNames.map(place => `• ${place}`).join('\n')}
           navigationSuccessListener.remove();
           navigationErrorListener.remove();
           navigationStatusListener.remove();
-
+          personDetectionSubscription.remove();
+          faceFollowingStatusSubscription.remove();
+          
           if (NativeModules.AgentOSModule) {
+            // 停止人脸跟随（如果正在进行）
+            if (isFaceFollowing) {
+              await NativeModules.AgentOSModule.stopFaceFollowing();
+              console.log('人脸跟随已停止');
+            }
+            
+            // 注销人脸识别监听器
+            await NativeModules.AgentOSModule.unregisterPersonListener();
+            console.log('人脸识别监听器已注销');
+            
             await NativeModules.AgentOSModule.endPageAgent('ChatScreen');
             console.log('PageAgent ended on component unmount');
           }
@@ -854,6 +904,32 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  faceFollowingContainer: {
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  faceFollowingText: {
+    color: 'white',
+    fontSize: 16,
+    flex: 1,
+  },
+  stopFollowingButton: {
+    backgroundColor: '#FF5722',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 4,
+    marginLeft: 10,
+  },
+  stopFollowingButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 14,
   },
   quickButtonsContainer: {
     flex: 1,
