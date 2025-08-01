@@ -73,24 +73,30 @@ class MainApplication : Application(), ReactApplication {
                 // 注册系统Actions
                 registerAction(Actions.SAY)
                 
-                Log.d("zixun", "注册社保咨询Action")
+                Log.d("zixun", "plan_xml 注册社保咨询Action")
                 // 注册社保问答Action
                 val socialInsuranceAction = Action(
-                    "orion.agent.action.SOCIAL_INSURANCE",
-                    "社保咨询",
-                    "你是一个专业的社保小助手，熟悉各类社会保险政策和办理流程。你耐心细致，能够用通俗易懂的语言为用户解释复杂的社保问题，帮助用户快速理解各种手续的办理要求。用户想要咨询社保相关知识",
+                    name = "com.policy.agent.SOCIAL_SECURITY_QA",
+                    displayName = "社保政策咨询",
+                    desc = "回答用户关于社保政策的各类问题，包括社保、社保卡、养老保险、失业保险、工伤保险、医疗保险、生育保险、住房公积金等相关政策咨询",
                     parameters = listOf(
                         Parameter(
-                            "question",
-                            ParameterType.STRING,
-                            "社保相关问题",
-                            false
+                            name = "question",
+                            type = ParameterType.STRING,
+                            desc = "用户关于社保政策的具体问题，如'查询社保基数'、'社保卡如何办理'、'养老保险缴费标准'等",
+                            required = true
                         )
                     ),
                     executor = object : ActionExecutor {
                         override fun onExecute(action: Action, params: Bundle?): Boolean {
                             // 处理社保咨询逻辑
-                            Log.d("zixun", "收到社保咨询问题: ")
+                            Log.d("zixun", "plan_xml 收到社保咨询问题: " + params?.toString())
+                            // 打印Bundle中的所有键值对
+                            if (params != null) {
+                                for (key in params.keySet()) {
+                                    Log.d("zixun", "params[$key] = ${params.get(key)}")
+                                }
+                            }
                             // 获取参数
                             val question = params?.getString("question") ?: "社保相关问题"
                             return false
