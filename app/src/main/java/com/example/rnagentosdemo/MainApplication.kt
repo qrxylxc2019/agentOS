@@ -3,6 +3,7 @@ package com.example.rnagentosdemo
 import android.app.Application
 import android.os.Bundle
 import android.util.Log
+import com.ainirobot.agent.AgentCore
 import com.ainirobot.agent.AppAgent
 import com.ainirobot.agent.action.Action
 import com.ainirobot.agent.action.ActionExecutor
@@ -337,8 +338,16 @@ class MainApplication : Application(), ReactApplication {
                                     // 实时打印每个片段
                                     Log.d("zixun", "答案片段: '$answerPart'")
                                     
-                                    // 这里可以实时更新UI或通过AgentCore说出部分答案
-                                    // 例如：AgentCore.say(answerPart)
+                                    // 通过AgentCore实时播放答案片段
+                                    AgentCore.tts(answerPart, 180000, object : TTSCallback {
+                                        override fun onTaskEnd(status: Int, result: String?) {
+                                            if (status == 1) {
+                                                Log.d("zixun", "TTS: '$answerPart'")
+                                            } else {
+                                                Log.e("zixun", "TTS异常: '$answerPart'")
+                                            }
+                                        }
+                                    })
                                 }
                                 
                             } catch (e: Exception) {
