@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Bundle
 import android.util.Log
 import com.ainirobot.agent.AgentCore
+import com.ainirobot.agent.TTSCallback
 import com.ainirobot.agent.AppAgent
 import com.ainirobot.agent.action.Action
 import com.ainirobot.agent.action.ActionExecutor
@@ -24,6 +25,9 @@ import java.util.concurrent.atomic.AtomicInteger
 import okio.BufferedSource
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.util.concurrent.BlockingQueue
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicBoolean
 // import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
@@ -60,6 +64,12 @@ class MainApplication : Application(), ReactApplication {
         .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
         .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
         .build()
+    
+    // TTS队列管理
+    private val ttsQueue: BlockingQueue<String> = LinkedBlockingQueue()
+    private val ttsBuffer = StringBuilder()
+    private val isTtsThreadRunning = AtomicBoolean(false)
+    private var ttsThread: Thread? = null
 
     override val reactNativeHost: ReactNativeHost =
         object : DefaultReactNativeHost(this) {
@@ -157,6 +167,9 @@ class MainApplication : Application(), ReactApplication {
         }
 
 
+        // 启动TTS播放线程
+        startTTSThread()
+        
         Log.d(TAG, "MainApplication onCreate() completed")
     }
 
@@ -232,6 +245,101 @@ class MainApplication : Application(), ReactApplication {
      */
     fun isRobotApiConnected(): Boolean {
         return isRobotApiConnected
+    }
+    
+    /**
+     * 启动TTS播放线程
+     */
+    private fun startTTSThread() {
+        if (isTtsThreadRunning.compareAndSet(false, true)) {
+            ttsThread = Thread {
+                Log.d("zixun", "TTS播放线程启动")
+                try {
+                    while (isTtsThreadRunning.get()) {
+                        try {
+                            // 从队列中取出句子进行播放
+                            val sentence = ttsQueue.take() // 阻塞等待
+                            if (sentence.isNotEmpty()) {
+                                Log.d("zixun", "开始播放句子: '$sentence'")
+                                
+                                // 调用TTS播放
+                                AgentCore.tts(sentence, 90000, object : TTSCallback {
+                                    override fun onTaskEnd(status: Int, result: String?) {
+                                        Log.d("zixun", "句子播放完成: '$sentence', status: $status")
+                                    }
+                                })
+                            }
+                        } catch (e: InterruptedException) {
+                            Log.d("zixun", "TTS线程被中断")
+                            break
+                        } catch (e: Exception) {
+                            Log.e("zixun", "TTS播放异常", e)
+                        }
+                    }
+                } finally {
+                    Log.d("zixun", "TTS播放线程结束")
+                }
+            }
+            ttsThread?.start()
+        }
+    }
+    
+    /**
+     * 停止TTS播放线程
+     */
+    private fun stopTTSThread() {
+        if (isTtsThreadRunning.compareAndSet(true, false)) {
+            ttsThread?.interrupt()
+            ttsQueue.clear()
+            ttsBuffer.clear()
+        }
+    }
+    
+    /**
+     * 添加文本片段到缓冲区，并检查是否有完整句子可以播放
+     */
+    private fun addTextToBuffer(text: String) {
+        synchronized(ttsBuffer) {
+            ttsBuffer.append(text)
+            
+            // 检查是否包含句号、问号、感叹号等句子结束符
+            val content = ttsBuffer.toString()
+            val sentenceEndPattern = Regex("[。！？.!?]")
+            
+            var lastEndIndex = 0
+            sentenceEndPattern.findAll(content).forEach { match ->
+                val endIndex = match.range.last + 1
+                val sentence = content.substring(lastEndIndex, endIndex).trim()
+                
+                if (sentence.isNotEmpty()) {
+                    // 将完整句子加入播放队列
+                    ttsQueue.offer(sentence)
+                    Log.d("zixun", "句子加入播放队列: '$sentence'")
+                }
+                lastEndIndex = endIndex
+            }
+            
+            // 移除已处理的部分，保留未完成的句子
+            if (lastEndIndex > 0) {
+                val remaining = content.substring(lastEndIndex)
+                ttsBuffer.clear()
+                ttsBuffer.append(remaining)
+            }
+        }
+    }
+    
+    /**
+     * 处理流式响应结束，播放剩余的文本
+     */
+    private fun flushRemainingText() {
+        synchronized(ttsBuffer) {
+            val remaining = ttsBuffer.toString().trim()
+            if (remaining.isNotEmpty()) {
+                ttsQueue.offer(remaining)
+                Log.d("zixun", "剩余文本加入播放队列: '$remaining'")
+                ttsBuffer.clear()
+            }
+        }
     }
     
     /**
@@ -338,12 +446,7 @@ class MainApplication : Application(), ReactApplication {
                                     // 实时打印每个片段
                                     Log.d("zixun", "答案片段: '$answerPart'")
                                     
-                                    // 通过AgentCore实时播放答案片段
-                                    AgentCore.tts("123",90000, object : TTSCallback {
-                                        override fun onTaskEnd(status: Int, result: String?) {
-
-                                        }
-                                    })
+                                    addTextToBuffer(answerPart)
                                 }
                                 
                             } catch (e: Exception) {
@@ -354,13 +457,12 @@ class MainApplication : Application(), ReactApplication {
                 }
             }
             
-            // 流式响应结束，打印最终结果
+            // 流式响应结束，处理剩余文本并打印最终结果
+            flushRemainingText()
+            
             val finalAnswer = fullAnswer.toString()
             Log.d("zixun", "【响应完成】")
             Log.d("zixun", "最终答案: $finalAnswer")
-            
-            // 这里可以通过AgentCore说出完整答案
-            // 例如：AgentCore.say(finalAnswer)
             
         } catch (e: Exception) {
             Log.e("zixun", "处理流式响应失败", e)
@@ -385,5 +487,7 @@ class MainApplication : Application(), ReactApplication {
     
     override fun onTerminate() {
         super.onTerminate()
+        // 停止TTS播放线程
+        stopTTSThread()
     }
 } 
