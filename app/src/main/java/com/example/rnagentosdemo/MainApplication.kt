@@ -129,7 +129,7 @@ class MainApplication : Application(), ReactApplication {
                     executor = object : ActionExecutor {
                         override fun onExecute(action: Action, params: Bundle?): Boolean {
                             // 处理社保咨询逻辑
-                            Log.d("zixun", "plan_xml 收到社保咨询问题: " + params?.toString())
+                            Log.d("zixun", "【步骤】意图识别 返回: " + params?.toString())
                             // 打印Bundle中的所有键值对
                             if (params != null) {
                                 for (key in params.keySet()) {
@@ -260,12 +260,12 @@ class MainApplication : Application(), ReactApplication {
                             // 从队列中取出句子进行播放
                             val sentence = ttsQueue.take() // 阻塞等待
                             if (sentence.isNotEmpty()) {
-                                Log.d("zixun", "开始播放句子: '$sentence'")
+                                Log.d("zixun", "【步骤】tts 播放句子: '$sentence'")
                                 
                                 // 调用TTS播放
                                 AgentCore.tts(sentence, 90000, object : TTSCallback {
                                     override fun onTaskEnd(status: Int, result: String?) {
-                                        Log.d("zixun", "句子播放完成: '$sentence', status: $status")
+                                        Log.d("zixun", "【步骤】tts 句子播放完成: '$sentence', status: $status")
                                     }
                                 })
                             }
@@ -364,7 +364,7 @@ class MainApplication : Application(), ReactApplication {
                     put("responseMode", "streaming") // 使用阻塞模式便于处理响应
                 }
                 
-                Log.d("zixun", "请求参数: $requestJson")
+                Log.d("zixun", "【步骤】开始调zhiliao 请求参数: $requestJson")
                 
                 // 创建请求体
                 val mediaType = "application/json; charset=utf-8".toMediaType()
@@ -385,6 +385,7 @@ class MainApplication : Application(), ReactApplication {
                     
                     override fun onResponse(call: Call, response: Response) {
                         try {
+                            Log.d("zixun", "【步骤】zhiliao返回")
                             if (response.isSuccessful) {
                                 val responseBody = response.body
                                 if (responseBody != null) {
