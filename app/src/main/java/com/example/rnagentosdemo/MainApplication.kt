@@ -13,6 +13,13 @@ import com.ainirobot.coreservice.client.RobotApi
 import com.ainirobot.coreservice.client.ApiListener
 import com.ainirobot.coreservice.client.module.ModuleCallbackApi
 import android.os.RemoteException
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import kotlinx.coroutines.*
+import org.json.JSONObject
+import java.io.IOException
+import java.util.concurrent.atomic.AtomicInteger
 // import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
@@ -27,10 +34,24 @@ class MainApplication : Application(), ReactApplication {
 
     companion object {
         private const val TAG = "MainApplication"
+        
+        // 全局sessionId变量，当检测不到人脸时需要清空
+        @Volatile
+        var sessionId: String = ""
+        
+        // 用户ID计数器，每次新会话递增
+        private val userIdCounter = AtomicInteger(1)
     }
 
     lateinit var appAgent: AppAgent
     private var isRobotApiConnected = false
+    
+    // HTTP客户端
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
 
     override val reactNativeHost: ReactNativeHost =
         object : DefaultReactNativeHost(this) {
@@ -98,7 +119,19 @@ class MainApplication : Application(), ReactApplication {
                                 }
                             }
                             // 获取参数
-                            val question = params?.getString("question") ?: "社保相关问题"
+                            val question = params?.getString("question")
+                            
+                            if (!question.isNullOrEmpty()) {
+                                // 异步调用问答接口
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    try {
+                                        callQuestionAnswerAPI(question)
+                                    } catch (e: Exception) {
+                                        Log.e("zixun", "调用问答接口失败", e)
+                                    }
+                                }
+                            }
+                            
                             return false
                         }
                     }
@@ -191,6 +224,110 @@ class MainApplication : Application(), ReactApplication {
      */
     fun isRobotApiConnected(): Boolean {
         return isRobotApiConnected
+    }
+    
+    /**
+     * 调用问答接口
+     */
+    private suspend fun callQuestionAnswerAPI(question: String) {
+        withContext(Dispatchers.IO) {
+            try {
+                Log.d("zixun", "开始调用问答接口，问题: $question")
+                
+                // 生成用户ID（如果是新会话）
+                val userId = if (sessionId.isEmpty()) {
+                    userIdCounter.getAndIncrement().toString().padStart(3, '0')
+                } else {
+                    // 从现有sessionId中提取用户ID，或使用当前计数器值
+                    userIdCounter.get().toString().padStart(3, '0')
+                }
+                
+                // 构建请求参数
+                val requestJson = JSONObject().apply {
+                    put("think", false)
+                    put("question", question)
+                    put("sessionId", sessionId)
+                    put("userId", userId)
+                    put("apiKey", "tecsun-1385cd856e7a11f08135525400d15cf7")
+                    put("channel", "实体机器人")
+                    put("channelSign", "1950469775473905664")
+                    put("responseMode", "blocking") // 使用阻塞模式便于处理响应
+                }
+                
+                Log.d("zixun", "请求参数: $requestJson")
+                
+                // 创建请求体
+                val mediaType = "application/json; charset=utf-8".toMediaType()
+                val requestBody = requestJson.toString().toRequestBody(mediaType)
+                
+                // 构建请求
+                val request = Request.Builder()
+                    .url("http://zhiliao.e-tecsun.com/kefu-api/answer/streamChat")
+                    .post(requestBody)
+                    .addHeader("Content-Type", "application/json")
+                    .build()
+                
+                // 发送请求
+                httpClient.newCall(request).enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        Log.e("zixun", "问答接口调用失败", e)
+                    }
+                    
+                    override fun onResponse(call: Call, response: Response) {
+                        try {
+                            val responseBody = response.body?.string()
+                            Log.d("zixun", "问答接口响应: $responseBody")
+                            
+                            if (response.isSuccessful && !responseBody.isNullOrEmpty()) {
+                                // 解析响应
+                                val responseJson = JSONObject(responseBody)
+                                
+                                // 更新sessionId（如果响应中包含）
+                                if (responseJson.has("sessionId")) {
+                                    val newSessionId = responseJson.getString("sessionId")
+                                    if (newSessionId.isNotEmpty()) {
+                                        sessionId = newSessionId
+                                        Log.d("zixun", "更新sessionId: $sessionId")
+                                    }
+                                }
+                                
+                                // 获取回答内容
+                                val answer = if (responseJson.has("answer")) {
+                                    responseJson.getString("answer")
+                                } else if (responseJson.has("data")) {
+                                    responseJson.getString("data")
+                                } else {
+                                    "抱歉，我暂时无法回答这个问题。"
+                                }
+                                
+                                Log.d("zixun", "问答结果: $answer")
+                                
+                                // 这里可以通过AgentCore或其他方式将答案返回给用户
+                                // 例如：AgentCore.say(answer)
+                                
+                            } else {
+                                Log.e("zixun", "问答接口响应失败: ${response.code} - $responseBody")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("zixun", "解析问答接口响应失败", e)
+                        } finally {
+                            response.close()
+                        }
+                    }
+                })
+                
+            } catch (e: Exception) {
+                Log.e("zixun", "构建问答接口请求失败", e)
+            }
+        }
+    }
+    
+    /**
+     * 清空会话ID（当检测不到人脸时调用）
+     */
+    fun clearSessionId() {
+        sessionId = ""
+        Log.d("zixun", "已清空sessionId")
     }
     
     override fun onTerminate() {

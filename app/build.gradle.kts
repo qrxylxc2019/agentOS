@@ -45,6 +45,10 @@ dependencies {
     implementation("com.facebook.react:react-android:0.73.9")
     implementation("com.facebook.react:hermes-android:0.73.9")
     
+    // HTTP client for API calls
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    
     // 以下是Android标准库，默认kotlin项目都会依赖，
     // 如果编译报未找到错误，再添加以下依赖库
     implementation("androidx.core:core-ktx:1.13.1")

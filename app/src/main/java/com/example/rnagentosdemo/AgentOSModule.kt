@@ -196,8 +196,11 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             Log.d(TAG, "人脸跟随目标成功")
                         }
                         Definition.STATUS_GUEST_LOST -> {
-                            // 跟随目标丢失
-                            Log.d(TAG, "人脸跟随目标丢失")
+                            // 检测不到人脸
+                            Log.d(TAG, "检测不到人脸")
+                            // 清空sessionId
+                            val mainApplication = reactApplicationContext.applicationContext as MainApplication
+                            mainApplication.clearSessionId()
                             stopFaceFollowing()
                         }
                         Definition.STATUS_GUEST_FARAWAY -> {
@@ -218,6 +221,13 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                         Definition.ERROR_SET_TRACK_FAILED, Definition.ERROR_TARGET_NOT_FOUND -> {
                             // 跟随目标未找到
                             Log.e(TAG, "人脸跟随目标未找到")
+                            // 清空sessionId
+                            try {
+                                val mainApplication = reactApplicationContext.applicationContext as MainApplication
+                                mainApplication.clearSessionId()
+                            } catch (e: Exception) {
+                                Log.e(TAG, "清空sessionId失败", e)
+                            }
                             stopFaceFollowing()
                         }
                         Definition.ACTION_RESPONSE_ALREADY_RUN -> {
@@ -227,6 +237,13 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                         Definition.ACTION_RESPONSE_REQUEST_RES_ERROR -> {
                             // 已经有需要控制底盘的接口调用(例如：引领、导航)，请先停止，才能继续调用
                             Log.e(TAG, "底盘资源被占用，无法进行人脸跟随")
+                            // 清空sessionId
+                            try {
+                                val mainApplication = reactApplicationContext.applicationContext as MainApplication
+                                mainApplication.clearSessionId()
+                            } catch (e: Exception) {
+                                Log.e(TAG, "清空sessionId失败", e)
+                            }
                             stopFaceFollowing()
                         }
                     }
@@ -264,6 +281,14 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         
         // 重置状态
         isFaceFollowing = false
+        
+        // 清空sessionId（当人脸跟随停止时）
+        try {
+            val mainApplication = reactApplicationContext.applicationContext as MainApplication
+            mainApplication.clearSessionId()
+        } catch (e: Exception) {
+            Log.e(TAG, "清空sessionId失败", e)
+        }
         
         // 发送人脸跟随状态变更事件到React Native
         sendFaceFollowingStatusEvent(false, null)
