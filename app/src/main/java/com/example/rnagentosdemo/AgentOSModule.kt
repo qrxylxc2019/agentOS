@@ -44,29 +44,24 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     // 存储PageAgent实例的Map，以pageId为key
     private val pageAgents = mutableMapOf<String, PageAgent>()
     
-    // 存储Action实例，以actionSid为key，用于后续调用notify()
     private val actionInstances = mutableMapOf<String, Action>()
     
-    // 存储导航回调，以callbackId为key
     private val navigationCallbacks = mutableMapOf<String, Promise>()
     
-    // 人脸识别相关
     private val mMaxDistance = 1.5 // 最大识别距离，使用Double类型
     private var personList: List<Person>? = null
     
-    // 人脸跟随相关常量
     private val DEFAULT_PERSON_LOST_TIMEOUT = 10L // 多久识别不到目标上报目标丢失状态，单位秒
     private val DEFAULT_PERSON_LOST_DISTANCE = 1.5f // 目标距离多远上报超距状态，单位米
     private val isAllowMoveBody = true // 是否允许机器人移动身体进行跟随
     
-    // 标记是否正在进行人脸跟随
     private var isFaceFollowing = false
     
-    // 人脸识别监听器
+    private var clearSessionJob: Job? = null
+    
     private val mPersonListener = object : PersonListener() {
         override fun personChanged() {
             try {
-                // 如果正在进行人脸跟随，则不处理人脸检测
                 if (isFaceFollowing) {
                     return
                 }
@@ -75,8 +70,6 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 val count = personList?.size ?: 0
                 if(count > 0){
                     Log.d(TAG, "检测到人脸数量: $count")
-
-                    // 打印每个检测到的人脸信息
                     personList?.forEachIndexed { index, person ->
                         Log.d(TAG, "有人脸[$index] ")
                     }
@@ -102,6 +95,9 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     init {
         // 在初始化时注册社保问答Action
         registerSocialInsuranceAction()
+
+        val mainApplication = reactApplicationContext.applicationContext as MainApplication
+        mainApplication.generateNewSessionId()
     }
     
     /**
@@ -177,6 +173,8 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         
         // 标记为正在进行人脸跟随，这会暂停人脸检测逻辑
         isFaceFollowing = true
+
+
         
         // 开始人脸跟随
         val reqId = 0 // 请求ID，可以是任意值
@@ -193,23 +191,44 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     when (status) {
                         Definition.STATUS_TRACK_TARGET_SUCCEED -> {
                             // 跟随目标成功
-                            Log.d(TAG, "人脸跟随目标成功")
+                            Log.d("zixun", "人脸跟随目标成功")
+                            clearSessionJob?.cancel()
+                            clearSessionJob = null
                         }
                         Definition.STATUS_GUEST_LOST -> {
-                            // 检测不到人脸
-                            Log.d(TAG, "检测不到人脸")
-                            // 清空sessionId
-                            val mainApplication = reactApplicationContext.applicationContext as MainApplication
-                            mainApplication.clearSessionId()
+                            // 检测不到人脸 - 30秒后清空sessionId
+                            Log.d("zixun", "onStatusUpdate 检测不到人脸，30秒后将清空sessionId")
+                            
+                            // 取消之前的延迟清空任务（如果有的话）
+                            clearSessionJob?.cancel()
+                            
+                            // 启动30秒延迟清空sessionId的任务
+                            clearSessionJob = CoroutineScope(Dispatchers.Main).launch {
+                                delay(30000) // 延迟30秒
+                                try {
+                                    val mainApplication = reactApplicationContext.applicationContext as MainApplication
+                                    mainApplication.generateNewSessionId()
+                                    Log.d("zixun", "生成新的sessionId")
+                                } catch (e: Exception) {
+                                    Log.e("zixun", "延迟清空sessionId失败", e)
+                                }
+                            }
+                            
                             stopFaceFollowing()
                         }
                         Definition.STATUS_GUEST_FARAWAY -> {
                             // 跟随目标距离已大于设置的最大距离
-                            Log.d(TAG, "人脸跟随目标距离过远")
+                            Log.d("zixun", "人脸跟随目标距离过远")
                         }
                         Definition.STATUS_GUEST_APPEAR -> {
                             // 跟随目标重新进入设置的最大距离内
                             Log.d(TAG, "人脸跟随目标重新进入范围")
+                            
+                            // 取消之前的延迟清空任务（如果有的话），因为目标重新出现了
+                            clearSessionJob?.cancel()
+                            clearSessionJob = null
+                            
+                            Log.d("zixun", "目标重新出现，取消延迟清空sessionId任务")
                         }
                     }
                 }
@@ -219,15 +238,26 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     
                     when (errorCode) {
                         Definition.ERROR_SET_TRACK_FAILED, Definition.ERROR_TARGET_NOT_FOUND -> {
-                            // 跟随目标未找到
-                            Log.e(TAG, "人脸跟随目标未找到")
-                            // 清空sessionId
-                            try {
-                                val mainApplication = reactApplicationContext.applicationContext as MainApplication
-                                mainApplication.clearSessionId()
-                            } catch (e: Exception) {
-                                Log.e(TAG, "清空sessionId失败", e)
+                            // 跟随目标未找到 - 30秒后清空sessionId
+                            Log.e(TAG, "人脸跟随目标未找到，30秒后将清空sessionId")
+                            
+                            // 取消之前的延迟清空任务（如果有的话）
+                            clearSessionJob?.cancel()
+                            
+                            // 启动30秒延迟清空sessionId的任务
+                            clearSessionJob = CoroutineScope(Dispatchers.Main).launch {
+                                delay(30000) // 延迟30秒
+                                try {
+                                    val mainApplication = reactApplicationContext.applicationContext as MainApplication
+                                    mainApplication.generateNewSessionId()
+                                    Log.d("zixun", "目标未找到，30秒后清空sessionId完成")
+                                    
+                                } catch (e: Exception) {
+                                    Log.e("zixun", "延迟清空sessionId失败", e)
+                                    
+                                }
                             }
+                            
                             stopFaceFollowing()
                         }
                         Definition.ACTION_RESPONSE_ALREADY_RUN -> {
@@ -236,14 +266,28 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                         }
                         Definition.ACTION_RESPONSE_REQUEST_RES_ERROR -> {
                             // 已经有需要控制底盘的接口调用(例如：引领、导航)，请先停止，才能继续调用
-                            Log.e(TAG, "底盘资源被占用，无法进行人脸跟随")
-                            // 清空sessionId
-                            try {
-                                val mainApplication = reactApplicationContext.applicationContext as MainApplication
-                                mainApplication.clearSessionId()
-                            } catch (e: Exception) {
-                                Log.e(TAG, "清空sessionId失败", e)
+                            Log.e(TAG, "底盘资源被占用，无法进行人脸跟随，30秒后将清空sessionId")
+                            
+                            // 取消之前的延迟清空任务（如果有的话）
+                            clearSessionJob?.cancel()
+                            
+                            // 标记进入延迟期间
+                            
+                            
+                            // 启动30秒延迟清空sessionId的任务
+                            clearSessionJob = CoroutineScope(Dispatchers.Main).launch {
+                                delay(30000) // 延迟30秒
+                                try {
+                                    val mainApplication = reactApplicationContext.applicationContext as MainApplication
+                                    mainApplication.generateNewSessionId()
+                                    Log.d("zixun", "底盘资源被占用，30秒后清空sessionId完成")
+                                    
+                                } catch (e: Exception) {
+                                    Log.e("zixun", "延迟清空sessionId失败", e)
+                                    
+                                }
                             }
+                            
                             stopFaceFollowing()
                         }
                     }
@@ -282,13 +326,10 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         // 重置状态
         isFaceFollowing = false
         
-        // 清空sessionId（当人脸跟随停止时）
-        try {
-            val mainApplication = reactApplicationContext.applicationContext as MainApplication
-            mainApplication.clearSessionId()
-        } catch (e: Exception) {
-            Log.e(TAG, "清空sessionId失败", e)
-        }
+        // 取消延迟清空sessionId的任务（如果有的话）
+        clearSessionJob?.cancel()
+        clearSessionJob = null
+        
         
         // 发送人脸跟随状态变更事件到React Native
         sendFaceFollowingStatusEvent(false, null)
@@ -368,6 +409,12 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             }
             
             Log.d(TAG, "手动停止人脸跟随")
+            
+            // 取消延迟清空sessionId的任务（如果有的话）
+            clearSessionJob?.cancel()
+            clearSessionJob = null
+            
+            
             stopFaceFollowing()
             
             val response = WritableNativeMap().apply {

@@ -20,6 +20,9 @@ import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
+import okio.BufferedSource
+import java.io.BufferedReader
+import java.io.InputStreamReader
 // import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
@@ -41,6 +44,10 @@ class MainApplication : Application(), ReactApplication {
         
         // 用户ID计数器，每次新会话递增
         private val userIdCounter = AtomicInteger(1)
+        
+        // 获取当前用户ID
+        val userId: String
+            get() = userIdCounter.get().toString()
     }
 
     lateinit var appAgent: AppAgent
@@ -234,14 +241,6 @@ class MainApplication : Application(), ReactApplication {
             try {
                 Log.d("zixun", "开始调用问答接口，问题: $question")
                 
-                // 生成用户ID（如果是新会话）
-                val userId = if (sessionId.isEmpty()) {
-                    userIdCounter.getAndIncrement().toString().padStart(3, '0')
-                } else {
-                    // 从现有sessionId中提取用户ID，或使用当前计数器值
-                    userIdCounter.get().toString().padStart(3, '0')
-                }
-                
                 // 构建请求参数
                 val requestJson = JSONObject().apply {
                     put("think", false)
@@ -251,7 +250,7 @@ class MainApplication : Application(), ReactApplication {
                     put("apiKey", "tecsun-1385cd856e7a11f08135525400d15cf7")
                     put("channel", "实体机器人")
                     put("channelSign", "1950469775473905664")
-                    put("responseMode", "blocking") // 使用阻塞模式便于处理响应
+                    put("responseMode", "streaming") // 使用阻塞模式便于处理响应
                 }
                 
                 Log.d("zixun", "请求参数: $requestJson")
@@ -262,7 +261,7 @@ class MainApplication : Application(), ReactApplication {
                 
                 // 构建请求
                 val request = Request.Builder()
-                    .url("http://zhiliao.e-tecsun.com/kefu-api/answer/streamChat")
+                    .url("https://zhiliao.e-tecsun.com/kefu-api/answer/streamChat")
                     .post(requestBody)
                     .addHeader("Content-Type", "application/json")
                     .build()
@@ -275,41 +274,17 @@ class MainApplication : Application(), ReactApplication {
                     
                     override fun onResponse(call: Call, response: Response) {
                         try {
-                            val responseBody = response.body?.string()
-                            Log.d("zixun", "问答接口响应: $responseBody")
-                            
-                            if (response.isSuccessful && !responseBody.isNullOrEmpty()) {
-                                // 解析响应
-                                val responseJson = JSONObject(responseBody)
-                                
-                                // 更新sessionId（如果响应中包含）
-                                if (responseJson.has("sessionId")) {
-                                    val newSessionId = responseJson.getString("sessionId")
-                                    if (newSessionId.isNotEmpty()) {
-                                        sessionId = newSessionId
-                                        Log.d("zixun", "更新sessionId: $sessionId")
-                                    }
+                            if (response.isSuccessful) {
+                                val responseBody = response.body
+                                if (responseBody != null) {
+                                    // 处理流式响应
+                                    handleStreamingResponse(responseBody)
                                 }
-                                
-                                // 获取回答内容
-                                val answer = if (responseJson.has("answer")) {
-                                    responseJson.getString("answer")
-                                } else if (responseJson.has("data")) {
-                                    responseJson.getString("data")
-                                } else {
-                                    "抱歉，我暂时无法回答这个问题。"
-                                }
-                                
-                                Log.d("zixun", "问答结果: $answer")
-                                
-                                // 这里可以通过AgentCore或其他方式将答案返回给用户
-                                // 例如：AgentCore.say(answer)
-                                
                             } else {
-                                Log.e("zixun", "问答接口响应失败: ${response.code} - $responseBody")
+                                Log.e("zixun", "问答接口响应失败: ${response.code}")
                             }
                         } catch (e: Exception) {
-                            Log.e("zixun", "解析问答接口响应失败", e)
+                            Log.e("zixun", "处理问答接口响应失败", e)
                         } finally {
                             response.close()
                         }
@@ -320,6 +295,79 @@ class MainApplication : Application(), ReactApplication {
                 Log.e("zixun", "构建问答接口请求失败", e)
             }
         }
+    }
+    
+    /**
+     * 处理流式响应
+     */
+    private fun handleStreamingResponse(responseBody: ResponseBody) {
+        try {
+            val inputStream = responseBody.byteStream()
+            val reader = BufferedReader(InputStreamReader(inputStream, "UTF-8"))
+            
+            val fullAnswer = StringBuilder()
+            var currentSessionId = ""
+            var messageId = ""
+            
+            reader.use { bufferedReader ->
+                var line: String?
+                while (bufferedReader.readLine().also { line = it } != null) {
+                    line?.let { jsonLine ->
+                        if (jsonLine.trim().isNotEmpty()) {
+                            try {
+                                // 解析每一行JSON
+                                val jsonObject = JSONObject(jsonLine)
+                                
+                                // 获取答案片段
+                                val answerPart = if (jsonObject.has("answer")) {
+                                    jsonObject.getString("answer")
+                                } else {
+                                    ""
+                                }
+                                
+                                // 获取messageId
+                                if (jsonObject.has("messageId")) {
+                                    messageId = jsonObject.getString("messageId")
+                                }
+                                
+                                // 累积答案
+                                if (answerPart.isNotEmpty()) {
+                                    fullAnswer.append(answerPart)
+                                    
+                                    // 实时打印每个片段
+                                    Log.d("zixun", "答案片段: '$answerPart'")
+                                    
+                                    // 这里可以实时更新UI或通过AgentCore说出部分答案
+                                    // 例如：AgentCore.say(answerPart)
+                                }
+                                
+                            } catch (e: Exception) {
+                                Log.e("zixun", "解析JSON行失败: $jsonLine", e)
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 流式响应结束，打印最终结果
+            val finalAnswer = fullAnswer.toString()
+            Log.d("zixun", "【响应完成】")
+            Log.d("zixun", "最终答案: $finalAnswer")
+            
+            // 这里可以通过AgentCore说出完整答案
+            // 例如：AgentCore.say(finalAnswer)
+            
+        } catch (e: Exception) {
+            Log.e("zixun", "处理流式响应失败", e)
+        }
+    }
+    
+    /**
+     * 生成新的会话ID（当开始新对话时调用）
+     */
+    fun generateNewSessionId() {
+        sessionId = "session_${System.currentTimeMillis()}_${userIdCounter.incrementAndGet()}"
+        Log.d("zixun", "生成新的sessionId: $sessionId")
     }
     
     /**
