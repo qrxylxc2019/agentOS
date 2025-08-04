@@ -38,7 +38,7 @@ import org.json.JSONObject
 class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
     companion object {
-        private const val TAG = "AgentOSModule"
+        private const val TAG = "zixun"
     }
 
     // 存储PageAgent实例的Map，以pageId为key
@@ -69,9 +69,9 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 personList = PersonApi.getInstance().getCompleteFaceList(mMaxDistance)
                 val count = personList?.size ?: 0
                 if(count > 0){
-                    Log.d(TAG, "检测到人脸数量: $count")
+                    Log.d("zixun", "检测到人脸数量: $count")
                     personList?.forEachIndexed { index, person ->
-                        Log.d(TAG, "有人脸[$index] ")
+                        Log.d("zixun",  "有人脸[$index] ")
                     }
                     // 发送事件到React Native
                     sendPersonDetectionEvent(count)
@@ -164,12 +164,12 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
      */
     private fun startFaceFollowing(bestPerson: Person) {
         if (isFaceFollowing) {
-            Log.d(TAG, "已经在进行人脸跟随，忽略此次请求")
+            Log.d("zixun", "已经在进行人脸跟随，忽略此次请求")
             return
         }
         
         val personId = bestPerson.id
-        Log.d(TAG, "开始人脸跟随，人脸ID: $personId")
+        Log.d("zixun", "开始人脸跟随，人脸ID: $personId")
         
         // 标记为正在进行人脸跟随，这会暂停人脸检测逻辑
         isFaceFollowing = true
@@ -186,7 +186,7 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             isAllowMoveBody, 
             object : ActionListener() {
                 override fun onStatusUpdate(status: Int, data: String) {
-                    Log.d(TAG, "人脸跟随状态更新 - status: $status, data: $data")
+                    Log.d("zixun", "人脸跟随状态更新 - status: $status, data: $data")
                     
                     when (status) {
                         Definition.STATUS_TRACK_TARGET_SUCCEED -> {
@@ -1218,14 +1218,25 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
      */
     @ReactMethod
     fun startNavigation(destName: String, promise: Promise) {
-        Log.d(TAG, "=== AgentOSModule.startNavigation() called ===")
-        Log.d(TAG, "Navigation destination: $destName")
+        Log.d("zixun", "=== AgentOSModule.startNavigation() called ===")
+        Log.d("zixun", "Navigation destination: $destName")
         
         try {
             val reqId = 0
             val coordinateDeviation = 0.2 // 坐标偏差
             val timeout = 30000L // 超时时间30秒
             
+
+            stopFaceFollowing();
+
+            // 注销人脸识别监听器
+            try {
+                val result = PersonApi.getInstance().unregisterPersonListener(mPersonListener)
+                Log.d(TAG, "导航开始前注销人脸识别监听器: $result")
+            } catch (e: Exception) {
+                Log.e(TAG, "导航开始前注销人脸识别监听器失败", e)
+            }
+
             val callResult = RobotApi.getInstance().startNavigation(reqId, destName, coordinateDeviation, timeout, object : ActionListener() {
                 override fun onResult(status: Int, response: String) {
                     Log.d(TAG, "Navigation result - status: $status, response: $response")
@@ -1233,7 +1244,15 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     when (status) {
                         Definition.RESULT_OK -> {
                             if ("true" == response) {
-                                Log.i(TAG, "导航成功")
+                                Log.i("zixun", "导航成功")
+                                
+                                // 重新注册人脸识别监听器
+                                try {
+                                    val result = PersonApi.getInstance().registerPersonListener(mPersonListener)
+                                    Log.d(TAG, "导航成功后重新注册人脸识别监听器: $result")
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "导航成功后重新注册人脸识别监听器失败", e)
+                                }
                                 
                                 // 创建事件用的Map对象
                                 val eventResponse = WritableNativeMap()
@@ -1257,6 +1276,14 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             } else {
                                 Log.i(TAG, "导航失败")
                                 
+                                // 重新注册人脸识别监听器
+                                try {
+                                    val result = PersonApi.getInstance().registerPersonListener(mPersonListener)
+                                    Log.d(TAG, "导航失败后重新注册人脸识别监听器: $result")
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "导航失败后重新注册人脸识别监听器失败", e)
+                                }
+                                
                                 // 创建事件用的Map对象
                                 val eventResponse = WritableNativeMap()
                                 eventResponse.putString("status", "failure")
@@ -1278,6 +1305,14 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             }
                         }
                         else -> {
+                            // 重新注册人脸识别监听器
+                            try {
+                                val result = PersonApi.getInstance().registerPersonListener(mPersonListener)
+                                Log.d(TAG, "导航错误后重新注册人脸识别监听器: $result")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "导航错误后重新注册人脸识别监听器失败", e)
+                            }
+                            
                             // 创建事件用的Map对象
                             val eventResponse = WritableNativeMap()
                             eventResponse.putString("status", "error")
