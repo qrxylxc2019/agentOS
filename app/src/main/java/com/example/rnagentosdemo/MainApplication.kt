@@ -339,13 +339,9 @@ class MainApplication : Application(), ReactApplication {
                                     Log.d("zixun", "答案片段: '$answerPart'")
                                     
                                     // 通过AgentCore实时播放答案片段
-                                    AgentCore.tts(answerPart, 180000, object : TTSCallback {
+                                    AgentCore.tts("123",90000, object : TTSCallback {
                                         override fun onTaskEnd(status: Int, result: String?) {
-                                            if (status == 1) {
-                                                Log.d("zixun", "TTS: '$answerPart'")
-                                            } else {
-                                                Log.e("zixun", "TTS异常: '$answerPart'")
-                                            }
+
                                         }
                                     })
                                 }
