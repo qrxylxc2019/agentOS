@@ -475,9 +475,10 @@ class MainApplication : Application(), ReactApplication {
     /**
      * 生成新的会话ID（当开始新对话时调用）
      */
-    fun generateNewSessionId() {
+    fun generateNewSessionId(): String {
         sessionId = "session_${System.currentTimeMillis()}_${userIdCounter.incrementAndGet()}"
         Log.d("zixun", "生成新的sessionId: $sessionId")
+        return sessionId
     }
     
     /**

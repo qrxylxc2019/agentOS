@@ -96,6 +96,31 @@ export interface FaceFollowingStatusEvent {
   personId?: string;
 }
 
+export interface BestPersonDetectedEvent {
+  personId: string;
+  distance: number;
+}
+
+export interface FaceFollowingStatusUpdateEvent {
+  status: number;
+  data: string;
+  personId?: string;
+}
+
+export interface FaceFollowingErrorEvent {
+  errorCode: number;
+  errorString: string;
+  personId?: string;
+}
+
+export interface FaceFollowingResultEvent {
+  status: number;
+  responseString: string;
+  personId?: string;
+}
+
+
+
 export interface IAgentOSModule {
   /**
    * 通过文本形式的用户问题触发大模型规划Action
@@ -128,6 +153,16 @@ export interface IAgentOSModule {
    * 停止人脸跟随
    */
   stopFaceFollowing(): Promise<{success: boolean, message: string}>;
+  
+  /**
+   * 根据人脸ID开始人脸跟随
+   */
+  startFaceFollowingByPersonId(personId: string): Promise<{success: boolean, message: string, personId?: string}>;
+  
+  /**
+   * 生成新的SessionId
+   */
+  generateNewSessionId(): Promise<{success: boolean, message: string, sessionId?: string}>;
 
   // =============== PageAgent 相关方法 ===============
 

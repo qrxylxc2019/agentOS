@@ -57,7 +57,7 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     
     private var isFaceFollowing = false
     
-    private var clearSessionJob: Job? = null
+
     
     private val mPersonListener = object : PersonListener() {
         override fun personChanged() {
@@ -79,7 +79,9 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     // 获取最佳人脸并开始人脸跟随
                     val bestPerson = PersonUtils.getBestFace(personList, mMaxDistance, 60.0)
                     if (bestPerson != null) {
-                        startFaceFollowing(bestPerson)
+                        Log.d("zixun", "获取到最佳人脸，ID: ${bestPerson.id}, 距离: ${bestPerson.distance}")
+                        // 发送最佳人脸检测事件到React Native
+                        sendBestPersonDetectedEvent(bestPerson.id.toString(), bestPerson.distance.toDouble())
                     }
                 }
             } catch (e: Exception) {
@@ -95,9 +97,6 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     init {
         // 在初始化时注册社保问答Action
         registerSocialInsuranceAction()
-
-        val mainApplication = reactApplicationContext.applicationContext as MainApplication
-        mainApplication.generateNewSessionId()
     }
     
     /**
@@ -160,6 +159,63 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     }
     
     /**
+     * 发送最佳人脸检测事件到React Native
+     */
+    private fun sendBestPersonDetectedEvent(personId: String, distance: Double) {
+        val params = WritableNativeMap().apply {
+            putString("personId", personId)
+            putDouble("distance", distance)
+        }
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("onBestPersonDetected", params)
+    }
+    
+    /**
+     * 发送人脸跟踪状态更新事件到React Native
+     */
+    private fun sendFaceFollowingStatusUpdate(status: Int, data: String, personId: String?) {
+        val params = WritableNativeMap().apply {
+            putInt("status", status)
+            putString("data", data)
+            personId?.let { putString("personId", it) }
+        }
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("onFaceFollowingStatusUpdate", params)
+    }
+    
+    /**
+     * 发送人脸跟踪错误事件到React Native
+     */
+    private fun sendFaceFollowingError(errorCode: Int, errorString: String, personId: String?) {
+        val params = WritableNativeMap().apply {
+            putInt("errorCode", errorCode)
+            putString("errorString", errorString)
+            personId?.let { putString("personId", it) }
+        }
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("onFaceFollowingError", params)
+    }
+    
+    /**
+     * 发送人脸跟踪结果事件到React Native
+     */
+    private fun sendFaceFollowingResult(status: Int, responseString: String, personId: String?) {
+        val params = WritableNativeMap().apply {
+            putInt("status", status)
+            putString("responseString", responseString)
+            personId?.let { putString("personId", it) }
+        }
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("onFaceFollowingResult", params)
+    }
+    
+
+    
+    /**
      * 开始人脸跟随
      */
     private fun startFaceFollowing(bestPerson: Person) {
@@ -188,33 +244,17 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 override fun onStatusUpdate(status: Int, data: String) {
                     Log.d("zixun", "人脸跟随状态更新 - status: $status, data: $data")
                     
+                    // 发送状态更新事件到RN层
+                    sendFaceFollowingStatusUpdate(status, data, personId.toString())
+                    
                     when (status) {
                         Definition.STATUS_TRACK_TARGET_SUCCEED -> {
                             // 跟随目标成功
                             Log.d("zixun", "人脸跟随目标成功")
-                            clearSessionJob?.cancel()
-                            clearSessionJob = null
                         }
                         Definition.STATUS_GUEST_LOST -> {
-                            // 检测不到人脸 - 30秒后清空sessionId
-                            Log.d("zixun", "onStatusUpdate 检测不到人脸，30秒后将清空sessionId")
-                            
-                            // 取消之前的延迟清空任务（如果有的话）
-                            clearSessionJob?.cancel()
-                            
-                            // 启动30秒延迟清空sessionId的任务
-                            clearSessionJob = CoroutineScope(Dispatchers.Main).launch {
-                                delay(30000) // 延迟30秒
-                                try {
-                                    val mainApplication = reactApplicationContext.applicationContext as MainApplication
-                                    mainApplication.generateNewSessionId()
-                                    Log.d("zixun", "生成新的sessionId")
-                                } catch (e: Exception) {
-                                    Log.e("zixun", "延迟清空sessionId失败", e)
-                                }
-                            }
-                            
-                            stopFaceFollowing()
+                            // 检测不到人脸 - 让RN层决定是否停止跟随
+                            Log.d("zixun", "onStatusUpdate 检测不到人脸，等待RN层处理")
                         }
                         Definition.STATUS_GUEST_FARAWAY -> {
                             // 跟随目标距离已大于设置的最大距离
@@ -224,11 +264,7 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             // 跟随目标重新进入设置的最大距离内
                             Log.d(TAG, "人脸跟随目标重新进入范围")
                             
-                            // 取消之前的延迟清空任务（如果有的话），因为目标重新出现了
-                            clearSessionJob?.cancel()
-                            clearSessionJob = null
-                            
-                            Log.d("zixun", "目标重新出现，取消延迟清空sessionId任务")
+                            Log.d("zixun", "目标重新出现")
                         }
                     }
                 }
@@ -236,29 +272,13 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 override fun onError(errorCode: Int, errorString: String) {
                     Log.e(TAG, "人脸跟随错误 - errorCode: $errorCode, errorString: $errorString")
                     
+                    // 发送错误事件到RN层
+                    sendFaceFollowingError(errorCode, errorString, personId.toString())
+                    
                     when (errorCode) {
                         Definition.ERROR_SET_TRACK_FAILED, Definition.ERROR_TARGET_NOT_FOUND -> {
-                            // 跟随目标未找到 - 30秒后清空sessionId
-                            Log.e(TAG, "人脸跟随目标未找到，30秒后将清空sessionId")
-                            
-                            // 取消之前的延迟清空任务（如果有的话）
-                            clearSessionJob?.cancel()
-                            
-                            // 启动30秒延迟清空sessionId的任务
-                            clearSessionJob = CoroutineScope(Dispatchers.Main).launch {
-                                delay(30000) // 延迟30秒
-                                try {
-                                    val mainApplication = reactApplicationContext.applicationContext as MainApplication
-                                    mainApplication.generateNewSessionId()
-                                    Log.d("zixun", "目标未找到，30秒后清空sessionId完成")
-                                    
-                                } catch (e: Exception) {
-                                    Log.e("zixun", "延迟清空sessionId失败", e)
-                                    
-                                }
-                            }
-                            
-                            stopFaceFollowing()
+                            // 跟随目标未找到 - 让RN层决定是否停止跟随
+                            Log.e(TAG, "人脸跟随目标未找到，等待RN层处理")
                         }
                         Definition.ACTION_RESPONSE_ALREADY_RUN -> {
                             // 正在跟随中，请先停止上次跟随，才能重新执行
@@ -266,29 +286,7 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                         }
                         Definition.ACTION_RESPONSE_REQUEST_RES_ERROR -> {
                             // 已经有需要控制底盘的接口调用(例如：引领、导航)，请先停止，才能继续调用
-                            Log.e(TAG, "底盘资源被占用，无法进行人脸跟随，30秒后将清空sessionId")
-                            
-                            // 取消之前的延迟清空任务（如果有的话）
-                            clearSessionJob?.cancel()
-                            
-                            // 标记进入延迟期间
-                            
-                            
-                            // 启动30秒延迟清空sessionId的任务
-                            clearSessionJob = CoroutineScope(Dispatchers.Main).launch {
-                                delay(30000) // 延迟30秒
-                                try {
-                                    val mainApplication = reactApplicationContext.applicationContext as MainApplication
-                                    mainApplication.generateNewSessionId()
-                                    Log.d("zixun", "底盘资源被占用，30秒后清空sessionId完成")
-                                    
-                                } catch (e: Exception) {
-                                    Log.e("zixun", "延迟清空sessionId失败", e)
-                                    
-                                }
-                            }
-                            
-                            stopFaceFollowing()
+                            Log.e(TAG, "底盘资源被占用，无法进行人脸跟随，等待RN层处理")
                         }
                     }
                 }
@@ -296,10 +294,13 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 override fun onResult(status: Int, responseString: String) {
                     Log.d(TAG, "人脸跟随结果 - status: $status, responseString: $responseString")
                     
+                    // 发送结果事件到RN层
+                    sendFaceFollowingResult(status, responseString, personId.toString())
+                    
                     if (status == Definition.ACTION_RESPONSE_STOP_SUCCESS) {
                         // 在焦点跟随过程中，主动调用stopFocusFollow，成功停止跟随
                         Log.d(TAG, "人脸跟随已成功停止")
-                        stopFaceFollowing()
+                        // 移除自动调用stopFaceFollowing()，让RN层控制
                     }
                 }
             }
@@ -325,11 +326,6 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         
         // 重置状态
         isFaceFollowing = false
-        
-        // 取消延迟清空sessionId的任务（如果有的话）
-        clearSessionJob?.cancel()
-        clearSessionJob = null
-        
         
         // 发送人脸跟随状态变更事件到React Native
         sendFaceFollowingStatusEvent(false, null)
@@ -394,6 +390,69 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     }
     
     /**
+     * RN层调用生成新的SessionId
+     */
+    @ReactMethod
+    fun generateNewSessionId(promise: Promise) {
+        try {
+            val mainApplication = reactApplicationContext.applicationContext as MainApplication
+            val newSessionId = mainApplication.generateNewSessionId()
+            Log.d(TAG, "RN层请求生成新的sessionId: $newSessionId")
+            
+            val response = WritableNativeMap().apply {
+                putBoolean("success", true)
+                putString("message", "SessionId已生成")
+                putString("sessionId", newSessionId)
+            }
+            promise.resolve(response)
+        } catch (e: Exception) {
+            Log.e(TAG, "生成SessionId时发生异常", e)
+            promise.reject("GENERATE_SESSION_ID_EXCEPTION", "生成SessionId时发生异常: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * RN层调用开始人脸跟随
+     */
+    @ReactMethod
+    fun startFaceFollowingByPersonId(personId: String, promise: Promise) {
+        try {
+            if (isFaceFollowing) {
+                val response = WritableNativeMap().apply {
+                    putBoolean("success", false)
+                    putString("message", "已经在进行人脸跟随")
+                }
+                promise.resolve(response)
+                return
+            }
+            
+            // 从当前人脸列表中找到指定ID的人脸
+            val targetPerson = personList?.find { it.id.toString() == personId }
+            if (targetPerson == null) {
+                val response = WritableNativeMap().apply {
+                    putBoolean("success", false)
+                    putString("message", "未找到指定ID的人脸: $personId")
+                }
+                promise.resolve(response)
+                return
+            }
+            
+            Log.d(TAG, "RN层请求开始人脸跟随，人脸ID: $personId")
+            startFaceFollowing(targetPerson)
+            
+            val response = WritableNativeMap().apply {
+                putBoolean("success", true)
+                putString("message", "人脸跟随已开始")
+                putString("personId", personId)
+            }
+            promise.resolve(response)
+        } catch (e: Exception) {
+            Log.e(TAG, "开始人脸跟随时发生异常", e)
+            promise.reject("START_FACE_FOLLOWING_EXCEPTION", "开始人脸跟随时发生异常: ${e.message}", e)
+        }
+    }
+    
+    /**
      * 手动停止人脸跟随
      */
     @ReactMethod
@@ -409,11 +468,6 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             }
             
             Log.d(TAG, "手动停止人脸跟随")
-            
-            // 取消延迟清空sessionId的任务（如果有的话）
-            clearSessionJob?.cancel()
-            clearSessionJob = null
-            
             
             stopFaceFollowing()
             
@@ -1226,16 +1280,16 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             val coordinateDeviation = 0.2 // 坐标偏差
             val timeout = 30000L // 超时时间30秒
             
+            // 移除自动停止人脸跟踪，让RN层控制
+            // stopFaceFollowing();
 
-            stopFaceFollowing();
-
-            // 注销人脸识别监听器
-            try {
-                val result = PersonApi.getInstance().unregisterPersonListener(mPersonListener)
-                Log.d(TAG, "导航开始前注销人脸识别监听器: $result")
-            } catch (e: Exception) {
-                Log.e(TAG, "导航开始前注销人脸识别监听器失败", e)
-            }
+            // 移除自动注销人脸识别监听器，让RN层控制
+            // try {
+            //     val result = PersonApi.getInstance().unregisterPersonListener(mPersonListener)
+            //     Log.d(TAG, "导航开始前注销人脸识别监听器: $result")
+            // } catch (e: Exception) {
+            //     Log.e(TAG, "导航开始前注销人脸识别监听器失败", e)
+            // }
 
             val callResult = RobotApi.getInstance().startNavigation(reqId, destName, coordinateDeviation, timeout, object : ActionListener() {
                 override fun onResult(status: Int, response: String) {
@@ -1246,13 +1300,13 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             if ("true" == response) {
                                 Log.i("zixun", "导航成功")
                                 
-                                // 重新注册人脸识别监听器
-                                try {
-                                    val result = PersonApi.getInstance().registerPersonListener(mPersonListener)
-                                    Log.d(TAG, "导航成功后重新注册人脸识别监听器: $result")
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "导航成功后重新注册人脸识别监听器失败", e)
-                                }
+                                // 移除自动重新注册人脸识别监听器，让RN层控制
+                                // try {
+                                //     val result = PersonApi.getInstance().registerPersonListener(mPersonListener)
+                                //     Log.d(TAG, "导航成功后重新注册人脸识别监听器: $result")
+                                // } catch (e: Exception) {
+                                //     Log.e(TAG, "导航成功后重新注册人脸识别监听器失败", e)
+                                // }
                                 
                                 // 创建事件用的Map对象
                                 val eventResponse = WritableNativeMap()
@@ -1276,13 +1330,13 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             } else {
                                 Log.i(TAG, "导航失败")
                                 
-                                // 重新注册人脸识别监听器
-                                try {
-                                    val result = PersonApi.getInstance().registerPersonListener(mPersonListener)
-                                    Log.d(TAG, "导航失败后重新注册人脸识别监听器: $result")
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "导航失败后重新注册人脸识别监听器失败", e)
-                                }
+                                // 移除自动重新注册人脸识别监听器，让RN层控制
+                                // try {
+                                //     val result = PersonApi.getInstance().registerPersonListener(mPersonListener)
+                                //     Log.d(TAG, "导航失败后重新注册人脸识别监听器: $result")
+                                // } catch (e: Exception) {
+                                //     Log.e(TAG, "导航失败后重新注册人脸识别监听器失败", e)
+                                // }
                                 
                                 // 创建事件用的Map对象
                                 val eventResponse = WritableNativeMap()
@@ -1305,13 +1359,13 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             }
                         }
                         else -> {
-                            // 重新注册人脸识别监听器
-                            try {
-                                val result = PersonApi.getInstance().registerPersonListener(mPersonListener)
-                                Log.d(TAG, "导航错误后重新注册人脸识别监听器: $result")
-                            } catch (e: Exception) {
-                                Log.e(TAG, "导航错误后重新注册人脸识别监听器失败", e)
-                            }
+                            // 移除自动重新注册人脸识别监听器，让RN层控制
+                            // try {
+                            //     val result = PersonApi.getInstance().registerPersonListener(mPersonListener)
+                            //     Log.d(TAG, "导航错误后重新注册人脸识别监听器: $result")
+                            // } catch (e: Exception) {
+                            //     Log.e(TAG, "导航错误后重新注册人脸识别监听器失败", e)
+                            // }
                             
                             // 创建事件用的Map对象
                             val eventResponse = WritableNativeMap()

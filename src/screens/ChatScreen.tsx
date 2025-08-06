@@ -13,7 +13,7 @@ import {
   Image,
   ScrollView,
 } from 'react-native';
-import { ChatMessage, AgentOSModule, ActionConfig, ActionExecutionData, RobotLocalizationResponse, PlaceListResponse, NavigationResponse, NavigationStatusUpdate, NavigationCallback, PersonDetectionEvent, FaceFollowingStatusEvent } from '../types';
+import { ChatMessage, AgentOSModule, ActionConfig, ActionExecutionData, RobotLocalizationResponse, PlaceListResponse, NavigationResponse, NavigationStatusUpdate, NavigationCallback, PersonDetectionEvent, FaceFollowingStatusEvent, BestPersonDetectedEvent, FaceFollowingStatusUpdateEvent, FaceFollowingErrorEvent, FaceFollowingResultEvent } from '../types';
 
 function ChatScreen(): React.JSX.Element {
   const isDarkMode = useColorScheme() === 'dark';
@@ -33,6 +33,19 @@ function ChatScreen(): React.JSX.Element {
   const [followingPersonId, setFollowingPersonId] = useState<string | null>(null);
   const currentNavigationActionSid = useRef<string | null>(null);
   const navigationCallbacks = useRef<Map<string, NavigationCallback>>(new Map());
+  const isNavigationInProgress = useRef<boolean>(false);
+  
+  // 导航状态UI
+  const [navigationStatus, setNavigationStatus] = useState<{
+    visible: boolean;
+    type: 'preparing' | 'inProgress' | 'success' | 'error';
+    message: string;
+    destination?: string;
+  }>({
+    visible: false,
+    type: 'preparing',
+    message: '',
+  });
 
   useEffect(() => {
     // 注册人脸识别监听器
@@ -72,6 +85,128 @@ function ChatScreen(): React.JSX.Element {
         }
       }
     );
+    
+    // 监听最佳人脸检测事件
+    const bestPersonDetectedSubscription = DeviceEventEmitter.addListener(
+      'onBestPersonDetected',
+      async (event: BestPersonDetectedEvent) => {
+        console.log('🎯 RN收到最佳人脸检测事件 - 人脸ID:', event.personId, ', 距离:', event.distance.toFixed(2), '米');
+        
+        // 检查是否正在导航中，如果是则忽略人脸检测事件
+        if (isNavigationInProgress.current) {
+          console.log('🚫 当前正在导航中，忽略人脸检测事件');
+          addMessage(`🚫 导航中忽略人脸检测 ID: ${event.personId}`, false);
+          return;
+        }
+        
+        addMessage(`🎯 检测到最佳人脸 ID: ${event.personId}，距离: ${event.distance.toFixed(2)}米`, false);
+        
+        // 自动开始人脸跟随
+        try {
+          console.log('🚀 RN层自动开始人脸跟随，人脸ID:', event.personId);
+          const result = await AgentOSModule.startFaceFollowingByPersonId(event.personId);
+          if (result.success) {
+            console.log('✅ 人脸跟随启动成功:', result.message);
+            addMessage(`🚀 开始跟随人脸 ID: ${event.personId}`, false);
+          } else {
+            console.log('❌ 人脸跟随启动失败:', result.message);
+            addMessage(`❌ 跟随启动失败: ${result.message}`, false);
+          }
+        } catch (error) {
+          console.error('💥 启动人脸跟随时发生错误:', error);
+          addMessage(`💥 跟随启动错误: ${error}`, false);
+        }
+      }
+    );
+    
+    // 监听人脸跟踪状态更新事件
+    const faceFollowingStatusUpdateSubscription = DeviceEventEmitter.addListener(
+      'onFaceFollowingStatusUpdate',
+      async (event: FaceFollowingStatusUpdateEvent) => {
+        console.log('📊 人脸跟踪状态更新 - status:', event.status, 'data:', event.data, 'personId:', event.personId);
+        addMessage(`📊 跟踪状态: ${event.data} (状态码: ${event.status})`, false);
+        
+        // 根据状态决定是否需要停止跟踪和重置SessionId
+        if (event.status === 1003) { // STATUS_GUEST_LOST - 检测不到人脸
+          console.log('🔄 检测不到人脸，RN层主动停止人脸跟踪');
+          
+          // 立即停止人脸跟踪
+          try {
+            await AgentOSModule.stopFaceFollowing();
+            console.log('🛑 RN层成功停止人脸跟踪');
+            addMessage('🛑 检测不到人脸，已停止跟踪', false);
+          } catch (error) {
+            console.error('💥 RN层停止人脸跟踪失败:', error);
+          }
+          
+          // 启动30秒延迟重置SessionId
+          setTimeout(async () => {
+            try {
+              const sessionResult = await AgentOSModule.generateNewSessionId();
+              if (sessionResult.success) {
+                console.log('🆔 因人脸丢失重置SessionId成功:', sessionResult.sessionId);
+                addMessage(`🆔 会话已重置: ${sessionResult.sessionId}`, false);
+              }
+            } catch (error) {
+              console.error('💥 重置SessionId失败:', error);
+            }
+          }, 30000);
+        } else if (event.status === 1002) { // STATUS_GUEST_APPEAR - 目标重新出现
+          console.log('✅ 人脸重新出现，取消SessionId重置');
+          // 这里可以取消之前的延迟重置（如果需要的话）
+        }
+      }
+    );
+    
+    // 监听人脸跟踪错误事件
+    const faceFollowingErrorSubscription = DeviceEventEmitter.addListener(
+      'onFaceFollowingError',
+      async (event: FaceFollowingErrorEvent) => {
+        console.log('❌ 人脸跟踪错误 - errorCode:', event.errorCode, 'errorString:', event.errorString, 'personId:', event.personId);
+        addMessage(`❌ 跟踪错误: ${event.errorString} (错误码: ${event.errorCode})`, false);
+        
+        // 对于特定的错误，RN层主动停止跟踪
+        if (event.errorCode === -108 || event.errorCode === -1 || event.errorCode === -107) { 
+          // -108: ERROR_TARGET_NOT_FOUND, -1: ERROR_SET_TRACK_FAILED, -107: ACTION_RESPONSE_REQUEST_RES_ERROR
+          console.log('🔄 跟踪错误，RN层主动停止人脸跟踪');
+          
+          // 立即停止人脸跟踪
+          try {
+            await AgentOSModule.stopFaceFollowing();
+            console.log('🛑 RN层因错误停止人脸跟踪成功');
+            addMessage(`🛑 跟踪出错已停止: ${event.errorString}`, false);
+            
+            // 对于目标未找到的错误，延迟重置SessionId
+            if (event.errorCode === -108 || event.errorCode === -1) {
+              setTimeout(async () => {
+                try {
+                  const sessionResult = await AgentOSModule.generateNewSessionId();
+                  if (sessionResult.success) {
+                    console.log('🆔 因跟踪错误重置SessionId成功:', sessionResult.sessionId);
+                    addMessage(`🆔 会话已重置: ${sessionResult.sessionId}`, false);
+                  }
+                } catch (error) {
+                  console.error('💥 重置SessionId失败:', error);
+                }
+              }, 30000);
+            }
+          } catch (error) {
+            console.error('💥 RN层停止人脸跟踪失败:', error);
+          }
+        }
+      }
+    );
+    
+    // 监听人脸跟踪结果事件
+    const faceFollowingResultSubscription = DeviceEventEmitter.addListener(
+      'onFaceFollowingResult',
+      (event: FaceFollowingResultEvent) => {
+        console.log('🎯 人脸跟踪结果 - status:', event.status, 'responseString:', event.responseString, 'personId:', event.personId);
+        addMessage(`🎯 跟踪结果: ${event.responseString} (状态: ${event.status})`, false);
+      }
+    );
+    
+
     
     // 测试原生模块是否可用
     console.log('=== ChatScreen useEffect ===');
@@ -131,7 +266,20 @@ function ChatScreen(): React.JSX.Element {
           const beginResult = await NativeModules.AgentOSModule.beginPageAgent(pageId);
           console.log('PageAgent began:', beginResult);
 
-          // 8. 上传页面信息
+          // 8. 生成新的SessionId
+          try {
+            const sessionResult = await NativeModules.AgentOSModule.generateNewSessionId();
+            if (sessionResult.success) {
+              console.log('✅ SessionId生成成功:', sessionResult.sessionId);
+              addMessage(`🆔 会话已初始化: ${sessionResult.sessionId}`, false);
+            } else {
+              console.error('❌ SessionId生成失败:', sessionResult.message);
+            }
+          } catch (sessionError) {
+            console.error('💥 SessionId生成异常:', sessionError);
+          }
+
+          // 9. 上传页面信息
           // 移除第一次uploadInterfaceInfo调用，避免覆盖问题
           console.log('PageAgent初始化完成，将在获取点位列表后统一上传界面信息');
 
@@ -319,6 +467,10 @@ ${placeListResult.placeNames.map(place => `• ${place}`).join('\n')}
           navigationStatusListener.remove();
           personDetectionSubscription.remove();
           faceFollowingStatusSubscription.remove();
+          bestPersonDetectedSubscription.remove();
+          faceFollowingStatusUpdateSubscription.remove();
+          faceFollowingErrorSubscription.remove();
+          faceFollowingResultSubscription.remove();
           
           if (NativeModules.AgentOSModule) {
             // 停止人脸跟随（如果正在进行）
@@ -344,6 +496,27 @@ ${placeListResult.placeNames.map(place => `• ${place}`).join('\n')}
 
   const backgroundStyle = {
     backgroundColor: '#5B6FB1', // 使用图片中的蓝紫色背景
+  };
+
+  // 导航状态管理函数
+  const showNavigationStatus = (type: 'preparing' | 'inProgress' | 'success' | 'error', message: string, destination?: string) => {
+    setNavigationStatus({
+      visible: true,
+      type,
+      message,
+      destination,
+    });
+
+    // 如果是成功或错误状态，3秒后自动隐藏
+    if (type === 'success' || type === 'error') {
+      setTimeout(() => {
+        setNavigationStatus(prev => ({ ...prev, visible: false }));
+      }, 3000);
+    }
+  };
+
+  const hideNavigationStatus = () => {
+    setNavigationStatus(prev => ({ ...prev, visible: false }));
   };
 
   // 自动启动定位的帮助函数
@@ -484,11 +657,29 @@ ${placeListResult.placeNames.map(place => `• ${place}`).join('\n')}
               const navigationCallback = {
                 onSuccess: async () => {
                   console.log('Navigation callback: 导航成功');
+                  
+                  // 清除导航进行中标志
+                  isNavigationInProgress.current = false;
+                  console.log('🏁 导航成功，清除导航进行中标志');
+                  
+                  // 显示导航成功状态
+                  showNavigationStatus('success', `已成功到达 ${location}`, location);
+                  
                   addMessage(`🎉 导航完成成功！
                   
 ✅ 机器人已成功到达"${location}"
 📍 任务状态：已完成
 🎯 引领服务圆满结束`, false);
+
+                  // 导航成功后，RN层重新注册人脸监听器
+                  try {
+                    console.log('🔄 导航成功后，RN层重新注册人脸监听器');
+                    await AgentOSModule.registerPersonListener();
+                    console.log('✅ RN层成功重新注册人脸监听器');
+                    addMessage('👁️ 已重新启用人脸检测功能', false);
+                  } catch (registerError) {
+                    console.error('💥 RN层重新注册人脸监听器失败:', registerError);
+                  }
 
                   // 导航成功，notify成功
                   try {
@@ -510,6 +701,13 @@ ${placeListResult.placeNames.map(place => `• ${place}`).join('\n')}
                 onError: async (errorCode: number, errorMessage: string) => {
                   console.log(`Navigation callback: 导航失败 - ${errorCode}: ${errorMessage}`);
 
+                  // 清除导航进行中标志
+                  isNavigationInProgress.current = false;
+                  console.log('🏁 导航失败，清除导航进行中标志');
+
+                  // 显示导航失败状态
+                  showNavigationStatus('error', `导航失败: ${errorMessage}`, location);
+
                   let errorMsg = `❌ 导航失败！
                   
 📍 目标地点：${location}
@@ -524,6 +722,16 @@ ${placeListResult.placeNames.map(place => `• ${place}`).join('\n')}
                   }
 
                   addMessage(errorMsg, false);
+
+                  // 导航失败后，RN层重新注册人脸监听器
+                  try {
+                    console.log('🔄 导航失败后，RN层重新注册人脸监听器');
+                    await AgentOSModule.registerPersonListener();
+                    console.log('✅ RN层成功重新注册人脸监听器');
+                    addMessage('👁️ 已重新启用人脸检测功能', false);
+                  } catch (registerError) {
+                    console.error('💥 RN层重新注册人脸监听器失败:', registerError);
+                  }
 
                   // 导航失败，notify失败
                   try {
@@ -560,11 +768,46 @@ ${placeListResult.placeNames.map(place => `• ${place}`).join('\n')}
               console.log(`回调已注册，当前映射大小: ${navigationCallbacks.current.size}`);
               console.log(`设置currentNavigationActionSid为: ${sid}`);
 
+              // 导航开始前，优化执行顺序：先注销监听器，再停止跟踪，最后开始导航
+              console.log('🚀 即将开始导航前的准备工作...');
+              
+              // 显示准备中状态
+              showNavigationStatus('preparing', '正在准备导航...', location);
+              
+              // 设置导航进行中标志，防止人脸检测事件干扰
+              isNavigationInProgress.current = true;
+              console.log('🚩 设置导航进行中标志，防止人脸检测干扰');
+              
+              try {
+                // 第一步：先注销人脸监听器，从源头切断事件流
+                console.log('🚫 第一步：导航开始前，RN层主动注销人脸监听器');
+                const unregisterResult = await AgentOSModule.unregisterPersonListener();
+                console.log('✅ RN层成功注销人脸监听器，结果:', unregisterResult);
+                
+                // 第二步：再停止人脸跟踪
+                console.log('🛑 第二步：导航开始前，RN层主动停止人脸跟踪');
+                const stopResult = await AgentOSModule.stopFaceFollowing();
+                console.log('✅ RN层成功停止人脸跟踪，结果:', stopResult);
+                
+                console.log('🎯 人脸功能已全部停止，准备开始导航');
+                addMessage('🛑 已停止人脸跟踪和监听，开始导航', false);
+              } catch (stopError) {
+                console.error('💥 RN层停止人脸功能失败:', stopError);
+                addMessage('⚠️ 停止人脸功能时出错，但仍将尝试导航', false);
+                // 即使停止失败也继续导航
+              }
+              
+              console.log('🗺️ 第三步：即将调用 AgentOSModule.startNavigation...');
+
               const navigationResult = await AgentOSModule.startNavigation(location);
               console.log('导航启动结果:', navigationResult);
 
               if (navigationResult.status === 'success') {
                 executionSuccess = true;
+                
+                // 显示导航进行中状态
+                showNavigationStatus('inProgress', `正在导航至 ${location}...`, location);
+                
                 addMessage(`🚀 导航启动成功！
                 
 📍 目标地点：${location}
@@ -578,6 +821,23 @@ ${placeListResult.placeNames.map(place => `• ${place}`).join('\n')}
                 console.log(`导航启动失败: 清空currentNavigationActionSid，之前的值: ${sid}`);
                 navigationCallbacks.current.delete(sid);
                 currentNavigationActionSid.current = null;
+
+                // 显示导航失败状态
+                showNavigationStatus('error', `导航启动失败: ${navigationResult.message}`, location);
+
+                // 清除导航进行中标志
+                isNavigationInProgress.current = false;
+                console.log('🏁 导航启动失败，清除导航进行中标志');
+
+                // 导航启动失败后，RN层重新注册人脸监听器
+                try {
+                  console.log('🔄 导航启动失败后，RN层重新注册人脸监听器');
+                  await AgentOSModule.registerPersonListener();
+                  console.log('✅ RN层成功重新注册人脸监听器');
+                  addMessage('👁️ 已重新启用人脸检测功能', false);
+                } catch (registerError) {
+                  console.error('💥 RN层重新注册人脸监听器失败:', registerError);
+                }
 
                 addMessage(`❌ 导航启动失败！
                 
@@ -593,6 +853,23 @@ ${placeListResult.placeNames.map(place => `• ${place}`).join('\n')}
               console.log(`导航调用异常: 清空currentNavigationActionSid，之前的值: ${sid}`);
               navigationCallbacks.current.delete(sid);
               currentNavigationActionSid.current = null;
+
+              // 显示导航异常状态
+              showNavigationStatus('error', `导航功能异常: ${navError}`, location);
+
+              // 清除导航进行中标志
+              isNavigationInProgress.current = false;
+              console.log('🏁 导航调用异常，清除导航进行中标志');
+
+              // 导航调用异常后，RN层重新注册人脸监听器
+              try {
+                console.log('🔄 导航调用异常后，RN层重新注册人脸监听器');
+                await AgentOSModule.registerPersonListener();
+                console.log('✅ RN层成功重新注册人脸监听器');
+                addMessage('👁️ 已重新启用人脸检测功能', false);
+              } catch (registerError) {
+                console.error('💥 RN层重新注册人脸监听器失败:', registerError);
+              }
 
               addMessage(`❌ 导航功能调用失败
               
@@ -824,8 +1101,73 @@ ${placeListResult.placeNames.map(place => `• ${place}`).join('\n')}
     </View>
   );
 
+  // 渲染导航状态小弹窗
+  const renderNavigationStatus = () => {
+    if (!navigationStatus.visible) return null;
+
+    const getStatusIcon = () => {
+      switch (navigationStatus.type) {
+        case 'preparing':
+          return '⏳';
+        case 'inProgress':
+          return '🚶‍♂️';
+        case 'success':
+          return '✅';
+        case 'error':
+          return '❌';
+        default:
+          return '📍';
+      }
+    };
+
+    const getStatusColor = () => {
+      switch (navigationStatus.type) {
+        case 'preparing':
+          return '#FFA500';
+        case 'inProgress':
+          return '#2196F3';
+        case 'success':
+          return '#4CAF50';
+        case 'error':
+          return '#F44336';
+        default:
+          return '#666';
+      }
+    };
+
+    return (
+      <View style={styles.navigationStatusOverlay}>
+        <View style={[styles.navigationStatusCard, { borderLeftColor: getStatusColor() }]}>
+          <View style={styles.navigationStatusHeader}>
+            <Text style={styles.navigationStatusIcon}>{getStatusIcon()}</Text>
+            <Text style={styles.navigationStatusTitle}>
+              {navigationStatus.destination && `前往 ${navigationStatus.destination}`}
+            </Text>
+            {navigationStatus.type !== 'inProgress' && (
+              <TouchableOpacity 
+                style={styles.navigationStatusClose}
+                onPress={hideNavigationStatus}
+              >
+                <Text style={styles.navigationStatusCloseText}>×</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <Text style={styles.navigationStatusMessage}>{navigationStatus.message}</Text>
+          {navigationStatus.type === 'inProgress' && (
+            <View style={styles.progressBar}>
+              <View style={styles.progressBarFill} />
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView style={[styles.container, backgroundStyle]}>
+      {/* 导航状态小弹窗 */}
+      {renderNavigationStatus()}
+      
       {/* 两列布局容器 */}
       <View style={styles.mainContainer}>
         {/* 左侧列 */}
@@ -1133,6 +1475,77 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  // 导航状态小弹窗样式
+  navigationStatusOverlay: {
+    position: 'absolute',
+    top: 60,
+    left: 20,
+    right: 20,
+    zIndex: 1000,
+    elevation: 10,
+  },
+  navigationStatusCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 12,
+    padding: 16,
+    borderLeftWidth: 4,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  navigationStatusHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  navigationStatusIcon: {
+    fontSize: 24,
+    marginRight: 12,
+  },
+  navigationStatusTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  navigationStatusClose: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  navigationStatusCloseText: {
+    fontSize: 18,
+    color: '#666',
+    fontWeight: 'bold',
+  },
+  navigationStatusMessage: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
+  },
+  progressBar: {
+    height: 3,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 2,
+    marginTop: 12,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#2196F3',
+    borderRadius: 2,
+    width: '100%',
+    transform: [{ translateX: -100 }],
+    animation: 'slide 2s infinite',
   },
 });
 
