@@ -14,6 +14,8 @@ import android.os.Bundle
 import kotlinx.coroutines.*
 import com.ainirobot.agent.AgentCore
 import com.ainirobot.agent.PageAgent
+import com.ainirobot.agent.OnTranscribeListener
+import com.ainirobot.agent.base.Transcription
 import com.ainirobot.agent.action.Action
 import com.ainirobot.agent.action.ActionExecutor
 import com.ainirobot.agent.base.Parameter
@@ -57,6 +59,44 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     
     private var isFaceFollowing = false
     
+    // ASR和TTS监听器
+    private val mTranscribeListener = object : OnTranscribeListener {
+        override fun onASRResult(transcription: Transcription): Boolean {
+            Log.d(TAG, "=== ASR Result Received ===")
+            Log.d(TAG, "ASR Text: '${transcription.text}'")
+            Log.d(TAG, "ASR Final: ${transcription.final}")
+            Log.d(TAG, "ASR Thread: ${Thread.currentThread().name}")
+            
+            try {
+                // 发送ASR结果事件到React Native
+                sendASRResultEvent(transcription.text, transcription.final)
+                
+                // 返回false表示仅监听不拦截，不影响系统后续处理
+                return false
+            } catch (e: Exception) {
+                Log.e(TAG, "Error handling ASR result", e)
+                return false
+            }
+        }
+        
+        override fun onTTSResult(transcription: Transcription): Boolean {
+            Log.d(TAG, "=== TTS Result Received ===")
+            Log.d(TAG, "TTS Text: '${transcription.text}'")
+            Log.d(TAG, "TTS Final: ${transcription.final}")
+            Log.d(TAG, "TTS Thread: ${Thread.currentThread().name}")
+            
+            try {
+                // 发送TTS结果事件到React Native
+                sendTTSResultEvent(transcription.text, transcription.final)
+                
+                // 返回false表示仅监听不拦截，不影响系统后续处理
+                return false
+            } catch (e: Exception) {
+                Log.e(TAG, "Error handling TTS result", e)
+                return false
+            }
+        }
+    }
 
     
     private val mPersonListener = object : PersonListener() {
@@ -211,6 +251,32 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         reactApplicationContext
             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
             .emit("onFaceFollowingResult", params)
+    }
+    
+    /**
+     * 发送ASR结果事件到React Native
+     */
+    private fun sendASRResultEvent(text: String, isFinal: Boolean) {
+        val params = WritableNativeMap().apply {
+            putString("text", text)
+            putBoolean("final", isFinal)
+        }
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("onASRResult", params)
+    }
+    
+    /**
+     * 发送TTS结果事件到React Native
+     */
+    private fun sendTTSResultEvent(text: String, isFinal: Boolean) {
+        val params = WritableNativeMap().apply {
+            putString("text", text)
+            putBoolean("final", isFinal)
+        }
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("onTTSResult", params)
     }
     
 
@@ -480,6 +546,74 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             Log.e(TAG, "停止人脸跟随时发生异常", e)
             promise.reject("STOP_FACE_FOLLOWING_EXCEPTION", "停止人脸跟随时发生异常: ${e.message}", e)
         }
+    }
+    
+    /**
+     * 设置ASR和TTS监听器到AgentCore
+     */
+    @ReactMethod
+    fun setTranscribeListener(pageId: String, promise: Promise) {
+        Log.d(TAG, "=== AgentOSModule.setTranscribeListener() called ===")
+        Log.d(TAG, "PageId: '$pageId'")
+        
+        try {
+            val pageAgent = pageAgents[pageId]
+            if (pageAgent != null) {
+                // 设置ASR和TTS监听器到AgentCore
+                pageAgent.setOnTranscribeListener(mTranscribeListener)
+                
+                Log.d(TAG, "ASR和TTS监听器设置成功")
+                
+                val response = WritableNativeMap().apply {
+                    putBoolean("success", true)
+                    putString("message", "ASR和TTS监听器设置成功")
+                    putString("pageId", pageId)
+                }
+                promise.resolve(response)
+            } else {
+                Log.e(TAG, "PageAgent not found for id: '$pageId'")
+                promise.reject("PAGEAGENT_NOT_FOUND", "PageAgent not found for id: $pageId")
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "设置ASR和TTS监听器时发生异常", e)
+            promise.reject("SET_TRANSCRIBE_LISTENER_EXCEPTION", "设置ASR和TTS监听器时发生异常: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * 为指定PageAgent设置ASR和TTS监听器
+     */
+    @ReactMethod
+    fun setPageAgentTranscribeListener(pageId: String, promise: Promise) {
+        Log.d(TAG, "=== AgentOSModule.setPageAgentTranscribeListener() called ===")
+        Log.d(TAG, "PageId: '$pageId'")
+        
+        try {
+            val pageAgent = pageAgents[pageId]
+            if (pageAgent != null) {
+                // 为PageAgent设置ASR和TTS监听器
+                pageAgent.setOnTranscribeListener(mTranscribeListener)
+                
+                Log.d(TAG, "PageAgent '$pageId' ASR和TTS监听器设置成功")
+                
+                val response = WritableNativeMap().apply {
+                    putBoolean("success", true)
+                    putString("message", "PageAgent ASR和TTS监听器设置成功")
+                    putString("pageId", pageId)
+                }
+                promise.resolve(response)
+            } else {
+                Log.e(TAG, "PageAgent not found for id: '$pageId'")
+                promise.reject("PAGEAGENT_NOT_FOUND", "PageAgent not found for id: $pageId")
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "设置PageAgent ASR和TTS监听器时发生异常", e)
+            promise.reject("SET_PAGEAGENT_TRANSCRIBE_LISTENER_EXCEPTION", "设置PageAgent ASR和TTS监听器时发生异常: ${e.message}", e)
+        }
+        
+        Log.d(TAG, "=== AgentOSModule.setPageAgentTranscribeListener() finished ===")
     }
     
     @ReactMethod

@@ -119,6 +119,16 @@ export interface FaceFollowingResultEvent {
   personId?: string;
 }
 
+export interface ASRResultEvent {
+  text: string;
+  final: boolean;
+}
+
+export interface TTSResultEvent {
+  text: string;
+  final: boolean;
+}
+
 
 
 export interface IAgentOSModule {
@@ -264,6 +274,13 @@ export interface IAgentOSModule {
    * @returns Promise<NavigationResponse> 导航启动结果
    */
   startNavigationWithCallback(destName: string, callback: NavigationCallback): Promise<NavigationResponse>;
+
+  /**
+   * 设置ASR和TTS监听器到PageAgent
+   * @param pageId 页面唯一标识符
+   * @returns Promise<AgentOSResponse> 设置结果
+   */
+  setTranscribeListener(pageId: string): Promise<AgentOSResponse>;
 }
 
 export const AgentOSModule: IAgentOSModule = NativeModules.AgentOSModule; 

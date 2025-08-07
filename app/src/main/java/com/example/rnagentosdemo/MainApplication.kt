@@ -362,6 +362,8 @@ class MainApplication : Application(), ReactApplication {
                     put("channel", "实体机器人")
                     put("channelSign", "1950469775473905664")
                     put("responseMode", "streaming") // 使用阻塞模式便于处理响应
+                    put("strictMode", true) // 使用阻塞模式便于处理响应
+
                 }
                 
                 Log.d("zixun", "【步骤】开始调zhiliao 请求参数: $requestJson")
