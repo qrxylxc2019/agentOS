@@ -201,8 +201,7 @@ function ChatScreen(): React.JSX.Element {
     const faceFollowingResultSubscription = DeviceEventEmitter.addListener(
       'onFaceFollowingResult',
       (event: FaceFollowingResultEvent) => {
-        console.log('🎯 人脸跟踪结果 - status:', event.status, 'responseString:', event.responseString, 'personId:', event.personId);
-        addMessage(`🎯 跟踪结果: ${event.responseString} (状态: ${event.status})`, false);
+        NativeModules.AgentOSModule.addLog(`🎯 跟踪结果: ${event.responseString} (状态: ${event.status})`);
       }
     );
 
@@ -210,10 +209,9 @@ function ChatScreen(): React.JSX.Element {
     const asrResultSubscription = DeviceEventEmitter.addListener(
       'onASRResult',
       (event: ASRResultEvent) => {
-        console.log('🎤 ASR结果 - text:', event.text, 'final:', event.final);
         if (event.final) {
           // 只在最终结果时显示消息
-          addMessage(`🎤 语音识别: ${event.text}`, true);
+          NativeModules.AgentOSModule.addLog(`rn语音识别: ${event.text}`);
         }
       }
     );

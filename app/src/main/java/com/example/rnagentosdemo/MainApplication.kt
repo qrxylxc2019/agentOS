@@ -140,14 +140,8 @@ class MainApplication : Application(), ReactApplication {
                             val question = params?.getString("question")
                             
                             if (!question.isNullOrEmpty()) {
-                                // 异步调用问答接口
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    try {
-                                        callQuestionAnswerAPI(question)
-                                    } catch (e: Exception) {
-                                        Log.e("zixun", "调用问答接口失败", e)
-                                    }
-                                }
+                                Log.d("zixun", "社保咨询问题: $question")
+                                // 注意：实际的API调用现在在AgentOSModule的onASRResult中处理
                             }
                             
                             return false
@@ -191,14 +185,12 @@ class MainApplication : Application(), ReactApplication {
 
                 @Throws(RemoteException::class)
                 override fun onRecovery() {
-                    // 控制权恢复，收到该事件后，重新恢复对机器人的控制
                     Log.i(TAG, "Robot control recovered - ready to control robot")
                     isRobotApiConnected = true
                 }
 
                 @Throws(RemoteException::class)
                 override fun onSuspend() {
-                    // 控制权被系统剥夺，收到该事件后，所有Api调用无效
                     Log.w(TAG, "Robot control suspended - all API calls will be invalid")
                     isRobotApiConnected = false
                 }
@@ -253,7 +245,6 @@ class MainApplication : Application(), ReactApplication {
     private fun startTTSThread() {
         if (isTtsThreadRunning.compareAndSet(false, true)) {
             ttsThread = Thread {
-                Log.d("zixun", "TTS播放线程启动")
                 try {
                     while (isTtsThreadRunning.get()) {
                         try {
@@ -316,7 +307,6 @@ class MainApplication : Application(), ReactApplication {
                 if (sentence.isNotEmpty()) {
                     // 将完整句子加入播放队列
                     ttsQueue.offer(sentence)
-                    Log.d("zixun", "句子加入播放队列: '$sentence'")
                 }
                 lastEndIndex = endIndex
             }
@@ -347,11 +337,9 @@ class MainApplication : Application(), ReactApplication {
     /**
      * 调用问答接口
      */
-    private suspend fun callQuestionAnswerAPI(question: String) {
+    suspend fun callQuestionAnswerAPI(question: String) {
         withContext(Dispatchers.IO) {
             try {
-                Log.d("zixun", "开始调用问答接口，问题: $question")
-                
                 // 构建请求参数
                 val requestJson = JSONObject().apply {
                     put("think", false)
@@ -387,7 +375,7 @@ class MainApplication : Application(), ReactApplication {
                     
                     override fun onResponse(call: Call, response: Response) {
                         try {
-                            Log.d("zixun", "【步骤】zhiliao返回")
+                            Log.d("zixun", "【步骤】zhiliao 返回")
                             if (response.isSuccessful) {
                                 val responseBody = response.body
                                 if (responseBody != null) {
@@ -432,6 +420,9 @@ class MainApplication : Application(), ReactApplication {
                                 // 解析每一行JSON
                                 val jsonObject = JSONObject(jsonLine)
                                 
+                                // 打印jsonObject
+                                Log.d("zixun", "jsonObject: $jsonObject")
+                                
                                 // 获取答案片段
                                 val answerPart = if (jsonObject.has("answer")) {
                                     jsonObject.getString("answer")
@@ -447,10 +438,6 @@ class MainApplication : Application(), ReactApplication {
                                 // 累积答案
                                 if (answerPart.isNotEmpty()) {
                                     fullAnswer.append(answerPart)
-                                    
-                                    // 实时打印每个片段
-                                    Log.d("zixun", "答案片段: '$answerPart'")
-                                    
                                     addTextToBuffer(answerPart)
                                 }
                                 

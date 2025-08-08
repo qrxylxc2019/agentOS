@@ -62,14 +62,21 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     // ASR和TTS监听器
     private val mTranscribeListener = object : OnTranscribeListener {
         override fun onASRResult(transcription: Transcription): Boolean {
-            Log.d(TAG, "=== ASR Result Received ===")
-            Log.d(TAG, "ASR Text: '${transcription.text}'")
-            Log.d(TAG, "ASR Final: ${transcription.final}")
-            Log.d(TAG, "ASR Thread: ${Thread.currentThread().name}")
-            
             try {
-                // 发送ASR结果事件到React Native
-                sendASRResultEvent(transcription.text, transcription.final)
+                // 当ASR结果为最终结果时，调用问答接口
+                if (transcription.final && transcription.text.isNotEmpty()) {
+                    Log.d(TAG, "ASR最终结果，调用问答接口: '${transcription.text}'")
+                    
+                    // 异步调用问答接口
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val mainApplication = reactApplicationContext.applicationContext as MainApplication
+                            mainApplication.callQuestionAnswerAPI(transcription.text)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "调用问答接口失败", e)
+                        }
+                    }
+                }
                 
                 // 返回false表示仅监听不拦截，不影响系统后续处理
                 return false
@@ -80,11 +87,6 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         }
         
         override fun onTTSResult(transcription: Transcription): Boolean {
-            Log.d(TAG, "=== TTS Result Received ===")
-            Log.d(TAG, "TTS Text: '${transcription.text}'")
-            Log.d(TAG, "TTS Final: ${transcription.final}")
-            Log.d(TAG, "TTS Thread: ${Thread.currentThread().name}")
-            
             try {
                 // 发送TTS结果事件到React Native
                 sendTTSResultEvent(transcription.text, transcription.final)
@@ -680,6 +682,11 @@ class AgentOSModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         }
         
         Log.d(TAG, "=== AgentOSModule.clearContext() finished ===")
+    }
+
+    @ReactMethod
+    fun addLog(message: String) {
+        Log.d(TAG, message)
     }
 
     // =============== PageAgent 相关方法 ===============
