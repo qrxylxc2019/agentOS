@@ -295,9 +295,9 @@ class MainApplication : Application(), ReactApplication {
             val cleanedText = text.replace("**", "").replace("-", "")
             ttsBuffer.append(cleanedText)
             
-            // 检查是否包含句号、问号、感叹号等句子结束符
+            // 检查是否包含句号、问号、感叹号、逗号等句子结束符
             val content = ttsBuffer.toString()
-            val sentenceEndPattern = Regex("[。！？.!?]")
+            val sentenceEndPattern = Regex("[。！？，.!?,]")
             
             var lastEndIndex = 0
             sentenceEndPattern.findAll(content).forEach { match ->
